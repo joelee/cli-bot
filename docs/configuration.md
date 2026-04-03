@@ -11,6 +11,8 @@ If `--config` is not provided, `cli-bot` searches for configuration in this orde
 1. `${HOME}/.config/cli-bot/cli-bot.toml`
 2. `/etc/cli-bot.toml`
 
+If neither file exists, `cli-bot` creates a default config at `${HOME}/.config/cli-bot/cli-bot.toml` automatically.
+
 For local development from the project root, pass `--config ./cli-bot.toml` explicitly.
 
 ## Sections

@@ -12,11 +12,18 @@ cargo install cli-bot
 cli-bot "Ping google five times"
 ```
 
+On macOS, you can also install with Homebrew:
+
+```bash
+brew install joelee/oss/cli-bot
+cli-bot "Ping google five times"
+```
+
 This assumes:
 
 - Ollama is installed
 - the Ollama service is running locally
-- `cli-bot` can find its config file
+- `cli-bot` can create a default config file on first run if needed
 
 See `docs/install-ollama.md` and `docs/configuration.md` for the full setup.
 
@@ -152,6 +159,30 @@ If the selected command is destructive, `cli-bot` asks for explicit approval bef
 
 See `docs/install-ollama.md` for a step-by-step setup guide.
 
+### From Homebrew on macOS
+
+This install path has been tested on macOS:
+
+```bash
+brew install joelee/oss/cli-bot
+```
+
+Then install the config into the default user location:
+
+```bash
+mkdir -p "$HOME/.config/cli-bot"
+install -m 0644 cli-bot.toml "$HOME/.config/cli-bot/cli-bot.toml"
+```
+
+If you skip that step, `cli-bot` will create a default config automatically at `~/.config/cli-bot/cli-bot.toml` when no config file is found.
+
+Before first use, make sure Ollama is running and the default model is available:
+
+```bash
+ollama pull lfm2:latest
+cli-bot --check
+```
+
 ### From crates.io
 
 After publishing, users can install with:
@@ -161,6 +192,33 @@ cargo install cli-bot
 ```
 
 This builds the executable from source on the user's machine.
+
+If `cargo` is not installed yet, install the Rust toolchain first.
+
+Common options:
+
+- Debian/Ubuntu:
+  ```bash
+  sudo apt install cargo
+  ```
+- Fedora:
+  ```bash
+  sudo dnf install cargo
+  ```
+- Arch Linux:
+  ```bash
+  sudo pacman -S rust
+  ```
+- macOS with Homebrew:
+  ```bash
+  brew install rust
+  ```
+
+If you want the latest official Rust toolchain instead of a distro package, use `rustup`:
+
+```bash
+curl https://sh.rustup.rs -sSf | sh
+```
 
 ### From Source
 
@@ -202,6 +260,12 @@ ollama pull lfm2:latest
 Detailed instructions are in `docs/install-ollama.md`.
 
 ## Configuration
+
+If no config file is provided and none is found in the normal lookup locations, `cli-bot` creates a default config automatically at:
+
+```text
+$HOME/.config/cli-bot/cli-bot.toml
+```
 
 Install the config into one of the default lookup locations.
 
@@ -343,6 +407,8 @@ If `NO_COLOR` is set, color output is disabled.
 
 - `docs/installation.md`
 - `docs/install-ollama.md`
+- `docs/homebrew.md`
+- `docs/crates-release.md`
 - `docs/publishing.md`
 - `docs/architecture.md`
 - `docs/configuration.md`

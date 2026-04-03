@@ -8,6 +8,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../cli-bot.toml");
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub ollama: OllamaConfig,
@@ -27,14 +29,23 @@ impl AppConfig {
 }
 
 pub fn resolve_config_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    let home = env::var_os("HOME").map(PathBuf::from);
+    resolve_config_path_for_home(explicit, home.as_deref())
+}
+
+fn resolve_config_path_for_home(explicit: Option<PathBuf>, home: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return Ok(path);
     }
 
-    let candidates = default_config_paths();
+    let candidates = default_config_paths_for_home(home);
 
     if let Some(path) = candidates.iter().find(|path| path.is_file()) {
         return Ok(path.clone());
+    }
+
+    if let Some(home) = home {
+        return create_default_user_config(home);
     }
 
     let searched = candidates
@@ -48,11 +59,6 @@ pub fn resolve_config_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
     )
 }
 
-fn default_config_paths() -> Vec<PathBuf> {
-    let home = env::var_os("HOME").map(PathBuf::from);
-    default_config_paths_for_home(home.as_deref())
-}
-
 fn default_config_paths_for_home(home: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
@@ -62,6 +68,35 @@ fn default_config_paths_for_home(home: Option<&Path>) -> Vec<PathBuf> {
 
     paths.push(PathBuf::from("/etc/cli-bot.toml"));
     paths
+}
+
+fn create_default_user_config(home: &Path) -> Result<PathBuf> {
+    let path = home.join(".config/cli-bot/cli-bot.toml");
+
+    if path.exists() {
+        if path.is_file() {
+            return Ok(path);
+        }
+
+        bail!(
+            "default config path `{}` exists but is not a file",
+            path.display()
+        )
+    }
+
+    let parent = path
+        .parent()
+        .context("default config path should have a parent directory")?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create config directory `{}` for default config",
+            parent.display()
+        )
+    })?;
+    fs::write(&path, DEFAULT_CONFIG_TEMPLATE)
+        .with_context(|| format!("failed to write default config file `{}`", path.display()))?;
+
+    Ok(path)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -181,7 +216,7 @@ mod tests {
 
     use super::{
         AppConfig, ExecutionConfig, default_config_paths_for_home, is_known_editor_in_path,
-        resolve_config_path, resolve_preferred_editor,
+        resolve_config_path, resolve_config_path_for_home, resolve_preferred_editor,
     };
 
     #[test]
@@ -243,6 +278,31 @@ preferred_editor = "nvim"
         let resolved = resolve_config_path(Some(path.clone())).expect("path should resolve");
 
         assert_eq!(resolved, path);
+    }
+
+    #[test]
+    fn creates_default_config_when_missing() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let temp_home = env::temp_dir().join(format!("cli-bot-config-test-{unique}"));
+
+        fs::create_dir_all(&temp_home).expect("temp home should be created");
+
+        let resolved = resolve_config_path_for_home(None, Some(&temp_home))
+            .expect("default config should be created");
+
+        assert_eq!(resolved, temp_home.join(".config/cli-bot/cli-bot.toml"));
+        assert!(resolved.is_file());
+
+        let config = AppConfig::load(&resolved).expect("created config should parse");
+        assert_eq!(config.ollama.model, "lfm2:latest");
+
+        fs::remove_file(&resolved).expect("config file should be removed");
+        fs::remove_dir_all(&temp_home).expect("temp home should be removed");
     }
 
     #[test]
