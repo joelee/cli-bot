@@ -1,0 +1,45 @@
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "lfm2:latest"
+temperature = 0.0
+system_prompt = """
+You translate natural-language requests into safe shell commands.
+Return valid JSON only.
+Do not wrap the JSON in Markdown fences.
+Prefer concise, POSIX-friendly shell commands.
+"""
+
+[safety]
+require_confirmation = true
+destructive_substrings = [
+  "rm -rf",
+  "mkfs",
+  "dd if=",
+  "fdisk",
+  "parted",
+  "shutdown",
+  "reboot",
+  "poweroff",
+  "kill -9",
+  "killall",
+  "pkill",
+  "chmod -r",
+  "chmod -R",
+  "chown -R",
+  "truncate",
+  "docker system prune",
+  "git reset --hard",
+  "> /",
+  ">> /"
+]
+
+[ui]
+selection_prompt = "Multiple commands match your request. Select one to execute"
+approval_prompt = "This command may be destructive. Approve execution?"
+show_command_before_execution = true
+auto_select_recommended = false
+
+[execution]
+shell = "/bin/sh"
+shell_arg = "-c"
+preferred_editor = "nvim"
