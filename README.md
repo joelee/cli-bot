@@ -81,6 +81,8 @@ It is meant to feel less like a chatbot and more like a sharp command-line copil
 cli-bot "Ping google five times"
 ```
 
+You can also run `cli-bot` with no request string and it will prompt you interactively.
+
 Expected command:
 
 ```bash
@@ -303,6 +305,12 @@ cli-bot "Show the last 50 lines of app.log"
 cli-bot "Create a gzipped tarball of the dist folder"
 ```
 
+You can also start with no arguments and type the request when prompted:
+
+```bash
+cli-bot
+```
+
 ## Safety Model
 
 `cli-bot` does not blindly trust model output.
@@ -414,3 +422,13 @@ If `NO_COLOR` is set, color output is disabled.
 - `docs/configuration.md`
 - `docs/usage.md`
 - `docs/testing.md`
+
+## Developer Setup
+
+If you use the `pre-commit` framework, install the repo hooks with:
+
+```bash
+pre-commit install
+```
+
+The repository includes `.pre-commit-config.yaml`, which runs `./scripts/verify.sh` before commits.

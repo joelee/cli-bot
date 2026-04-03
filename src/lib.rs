@@ -6,10 +6,11 @@ mod shell;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use std::{io, io::IsTerminal};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use dialoguer::{Confirm, Select};
+use dialoguer::{Confirm, Input, Select};
 
 use crate::config::{AppConfig, is_known_editor, resolve_config_path};
 use crate::llm::OllamaClient;
@@ -26,7 +27,6 @@ use crate::planner::{
 )]
 pub struct Cli {
     /// Natural-language request to translate into a shell command.
-    #[arg(required_unless_present = "check")]
     pub request: Option<String>,
 
     /// Path to the cli-bot TOML configuration file.
@@ -42,7 +42,7 @@ pub struct Cli {
     pub check: bool,
 
     /// Automatically use the LLM-recommended command when multiple choices are returned.
-    #[arg(long)]
+    #[arg(short = 'a', long)]
     pub auto_select_best: bool,
 
     /// Control ANSI color output: auto, always, or never.
@@ -109,7 +109,10 @@ pub fn run(cli: Cli) -> Result<()> {
     let request = cli
         .request
         .as_deref()
-        .context("a natural-language request is required unless --check is used")?;
+        .map(str::to_owned)
+        .map(normalize_request)
+        .transpose()?
+        .map_or_else(prompt_for_request, Ok)?;
     if cli.verbose {
         eprintln!(
             "{}",
@@ -118,7 +121,7 @@ pub fn run(cli: Cli) -> Result<()> {
     }
     let planning_start = Instant::now();
     let plan = planner.plan_commands(
-        request,
+        &request,
         &config.safety.destructive_substrings,
         preferred_editor.as_deref(),
         cli.verbose,
@@ -131,8 +134,13 @@ pub fn run(cli: Cli) -> Result<()> {
         println!("{plan_json}");
     }
 
-    if let Some(summary) = plan.summary.as_deref() {
-        println!("{summary}");
+    if cli.verbose
+        && let Some(summary) = plan.summary.as_deref()
+    {
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!("[verbose] planner summary: {summary}"))
+        );
     }
 
     let auto_select_best = config.ui.auto_select_recommended || cli.auto_select_best;
@@ -318,6 +326,40 @@ fn apply_model_override(config: &mut AppConfig, model_override: Option<&str>) ->
     Ok(())
 }
 
+fn prompt_for_request() -> Result<String> {
+    if !io::stdin().is_terminal() {
+        let mut request = String::new();
+        io::stdin()
+            .read_line(&mut request)
+            .context("failed to read request from stdin")?;
+
+        return normalize_request(request);
+    }
+
+    Input::<String>::new()
+        .with_prompt("What would you like cli-bot to do?")
+        .validate_with(|input: &String| -> std::result::Result<(), &str> {
+            if input.trim().is_empty() {
+                Err("request must not be empty")
+            } else {
+                Ok(())
+            }
+        })
+        .interact_text()
+        .context("failed to capture request from terminal")
+        .and_then(normalize_request)
+}
+
+fn normalize_request(request: String) -> Result<String> {
+    let request = request.trim();
+
+    if request.is_empty() {
+        bail!("request must not be empty")
+    }
+
+    Ok(request.to_string())
+}
+
 fn select_command<'a>(
     plan: &'a CommandPlan,
     prompt: &str,
@@ -385,7 +427,7 @@ fn duration_to_ms(duration: Duration) -> u128 {
 mod tests {
     use std::time::Duration;
 
-    use super::{apply_model_override, duration_to_ms, select_command};
+    use super::{apply_model_override, duration_to_ms, normalize_request, select_command};
     use crate::config::{AppConfig, ExecutionConfig, OllamaConfig, SafetyConfig, UiConfig};
     use crate::planner::{CommandPlan, PlannedCommand};
 
@@ -448,6 +490,21 @@ mod tests {
         let selected = select_command(&plan, "Choose", true).expect("selection should succeed");
 
         assert_eq!(selected.command, "ping -c 5 google.com");
+    }
+
+    #[test]
+    fn normalizes_request_by_trimming_whitespace() {
+        let request = normalize_request("  Ping google five times  ".into())
+            .expect("request should normalize");
+
+        assert_eq!(request, "Ping google five times");
+    }
+
+    #[test]
+    fn rejects_blank_request() {
+        let error = normalize_request("   ".into()).expect_err("blank request should fail");
+
+        assert!(error.to_string().contains("request must not be empty"));
     }
 
     fn sample_config() -> AppConfig {

@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cli-bot-verify
+        name: cli-bot verify
+        entry: ./scripts/verify.sh
+        language: system
+        pass_filenames: false

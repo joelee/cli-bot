@@ -2,6 +2,8 @@
 
 This document explains how to manually update the Homebrew formula for `cli-bot` after publishing a new release.
 
+If you want the `cli-bot` repository to update the formula automatically after `cargo publish`, see `scripts/release.sh` and `docs/crates-release.md`.
+
 The Homebrew tap for this project lives at:
 
 - GitHub: `https://github.com/joelee/homebrew-oss`
@@ -72,6 +74,21 @@ Then commit and push the tap update:
 git add Formula/cli-bot.rb
 git commit -m "cli-bot 0.1.2"
 git push
+```
+
+## Using The Release Script
+
+If `HOMEBREW_FORMULA_FILE` points to the local formula file, `cli-bot` can update the formula automatically during release:
+
+```bash
+export HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
+scripts/release.sh v0.1.2
+```
+
+You can also place that variable in `.env` at the root of the `cli-bot` repository:
+
+```bash
+HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
 ```
 
 ## Recommended Validation On macOS

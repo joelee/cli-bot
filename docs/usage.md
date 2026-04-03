@@ -6,6 +6,12 @@
 cargo run -- --config ./cli-bot.toml "Ping google five times"
 ```
 
+If you run `cli-bot` without a request string, it prompts you to type one interactively.
+
+```bash
+cargo run -- --config ./cli-bot.toml
+```
+
 ## Dry Run
 
 ```bash
@@ -114,6 +120,7 @@ cli-bot "Edit my git config file"
 
 - If the planner returns one command, `cli-bot` selects it automatically.
 - If the planner returns multiple commands, `cli-bot` presents an interactive selector unless `--auto-select-best` or `ui.auto_select_recommended = true` is enabled.
+- If no request string is provided, `cli-bot` prompts for one interactively.
 - The LLM is required to return `potentially_destructive: true | false` for each command.
 - The LLM is also asked to mark the best command with `recommended: true`.
 - If the selected command is marked or detected as destructive, `cli-bot` requests explicit approval.

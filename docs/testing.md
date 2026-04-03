@@ -3,19 +3,47 @@
 ## Local Checks
 
 ```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+./scripts/verify.sh
 ```
+
+This runs:
+
+- `cargo fmt --all --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test --all-targets --all-features`
+- `bash -n` against repository shell scripts and hooks
+- `cargo package --allow-dirty`
 
 ## Pre-commit Hook
 
-The repository includes `.githooks/pre-commit` to run the standard local checks.
+The repository includes `.githooks/pre-commit`, which runs `./scripts/verify.sh` before each commit.
 
 To enable it for your local clone:
 
 ```bash
 ./scripts/install-hooks.sh
+```
+
+## pre-commit Framework
+
+The repository also includes `.pre-commit-config.yaml` for developers who use the `pre-commit` framework.
+
+Install and enable it with:
+
+```bash
+pre-commit install
+```
+
+Run it manually across the whole repository with:
+
+```bash
+pre-commit run --all-files
+```
+
+The configured hook runs:
+
+```bash
+./scripts/verify.sh
 ```
 
 ## Current Test Coverage

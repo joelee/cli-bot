@@ -17,9 +17,7 @@ This repository contains `cli-bot`, a Rust CLI that converts natural-language re
 Run these before considering work complete:
 
 ```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+./scripts/verify.sh
 ```
 
 ## Project Layout
@@ -30,3 +28,4 @@ cargo test --all-targets --all-features
 - `src/shell.rs`: shell execution
 - `docs/`: project documentation
 - `.githooks/pre-commit`: local pre-commit verification script
+- `scripts/verify.sh`: shared verification entrypoint for local checks and hooks

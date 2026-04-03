@@ -67,6 +67,28 @@ Publish the new version:
 cargo publish
 ```
 
+Or use the local release helper script after pushing the GitHub tag/release:
+
+```bash
+scripts/release.sh v0.1.2
+```
+
+The script:
+
+- loads `.env` if present
+- reads `HOMEBREW_FORMULA_FILE` from the environment or `.env`
+- verifies the requested tag matches `Cargo.toml`
+- runs `fmt`, `clippy`, `test`, and `package`
+- publishes to crates.io
+- waits for the crate URL to become available
+- updates the Homebrew formula file with the new crate URL and checksum
+
+Example `.env`:
+
+```bash
+HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
+```
+
 ## Verify The Release
 
 Check the published crate metadata:
@@ -112,6 +134,12 @@ cargo test --all-targets --all-features
 cargo package
 cargo publish
 curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
+```
+
+Or with the helper script:
+
+```bash
+scripts/release.sh v0.1.2
 ```
 
 ## Notes
