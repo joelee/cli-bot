@@ -2,7 +2,7 @@
 
 This document explains how to manually update the Homebrew formula for `cli-bot` after publishing a new release.
 
-If you want the `cli-bot` repository to update the formula automatically after `cargo publish`, see `scripts/release.sh` and `docs/crates-release.md`.
+If you want the `cli-bot` repository to update the formula automatically after `cargo publish`, see [release.sh](../scripts/release.sh) and [crates.io Release](crates-release.md).
 
 The Homebrew tap for this project lives at:
 
@@ -57,6 +57,10 @@ Option 2: compute it directly from the crate download:
 ```bash
 curl -L https://static.crates.io/crates/cli-bot/cli-bot-0.1.2.crate | shasum -a 256
 ```
+
+Use the checksum from the published crates.io download, not the checksum of a local `target/package/*.crate` file.
+
+The local archive and the published archive can differ at the file level even when they represent the same release contents.
 
 ## Manual Update Steps
 

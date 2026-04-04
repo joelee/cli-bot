@@ -24,6 +24,12 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 - `temperature`: generation temperature
 - `system_prompt`: base system instruction for the planner
 
+### `[environment]`
+
+- `os`: operating system hint; use `auto`, `macos`, `linux`, or `unknown`
+- `distro`: Linux distribution hint; use `auto`, `arch`, `debian`, `ubuntu`, `fedora`, or `unknown`
+- `preferred_package_manager`: package manager override; use `auto`, `brew`, `apt`, `apt-get`, `dnf`, `pacman`, `paru`, `yay`, or `unknown`
+
 ### `[safety]`
 
 - `require_confirmation`: require approval before risky commands run
@@ -50,6 +56,11 @@ base_url = "http://127.0.0.1:11434"
 model = "lfm2:latest"
 temperature = 0.0
 system_prompt = "Return JSON only"
+
+[environment]
+os = "auto"
+distro = "auto"
+preferred_package_manager = "auto"
 
 [safety]
 require_confirmation = true

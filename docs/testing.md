@@ -50,6 +50,7 @@ The configured hook runs:
 
 - Config parsing
 - Config lookup order
+- Environment resolution and package manager detection
 - Preferred editor resolution
 - Known-editor detection
 - JSON extraction from Ollama responses

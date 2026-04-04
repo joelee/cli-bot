@@ -6,6 +6,12 @@
 cargo run -- --config ./cli-bot.toml "Ping google five times"
 ```
 
+Package-related requests use the resolved OS and package manager context.
+
+```bash
+cargo run -- --config ./cli-bot.toml "Install btop"
+```
+
 If you run `cli-bot` without a request string, it prompts you to type one interactively.
 
 ```bash
@@ -17,6 +23,21 @@ cargo run -- --config ./cli-bot.toml
 ```bash
 cargo run -- --config ./cli-bot.toml --dry-run "Show disk usage for the current directory"
 ```
+
+## Quiet Output
+
+```bash
+cargo run -- --config ./cli-bot.toml --quiet "Show disk usage for the current directory"
+```
+
+`--quiet` hides cli-bot informational output such as:
+
+- `Selected command:`
+- `Why:`
+- benchmark summaries
+- successful `--check` output
+
+The selected shell command still writes directly to the terminal.
 
 ## Print Structured Plan
 
@@ -96,6 +117,8 @@ This verifies:
 - the config file can be found and parsed
 - the Ollama service is reachable
 - the configured model is available in Ollama
+- the resolved OS and distro
+- the detected and effective package manager
 - the preferred editor resolves from config or `$EDITOR` and is available
 
 ## Installed Binary
@@ -121,6 +144,7 @@ cli-bot "Edit my git config file"
 - If the planner returns one command, `cli-bot` selects it automatically.
 - If the planner returns multiple commands, `cli-bot` presents an interactive selector unless `--auto-select-best` or `ui.auto_select_recommended = true` is enabled.
 - If no request string is provided, `cli-bot` prompts for one interactively.
+- Package-related requests use the resolved environment and effective package manager.
 - The LLM is required to return `potentially_destructive: true | false` for each command.
 - The LLM is also asked to mark the best command with `recommended: true`.
 - If the selected command is marked or detected as destructive, `cli-bot` requests explicit approval.

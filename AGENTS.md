@@ -11,6 +11,7 @@ This repository contains `cli-bot`, a Rust CLI that converts natural-language re
 - When multiple commands are returned, keep the interactive selection flow intact.
 - Prefer small, local changes over broad refactors.
 - Update docs in `docs/` when behavior, architecture, or configuration changes.
+- Update [CHANGELOG.md](CHANGELOG.md) when preparing or making a version bump.
 
 ## Verification
 

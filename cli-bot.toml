@@ -9,6 +9,11 @@ Do not wrap the JSON in Markdown fences.
 Prefer concise, POSIX-friendly shell commands.
 """
 
+[environment]
+os = "auto"
+distro = "auto"
+preferred_package_manager = "auto"
+
 [safety]
 require_confirmation = true
 destructive_substrings = [

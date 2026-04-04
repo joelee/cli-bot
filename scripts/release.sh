@@ -47,6 +47,22 @@ compute_sha256() {
   fail 'required command not found: sha256sum or shasum'
 }
 
+compute_sha256_from_url() {
+  local url="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    curl -fsSL "$url" | sha256sum | cut -d ' ' -f1
+    return
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    curl -fsSL "$url" | shasum -a 256 | cut -d ' ' -f1
+    return
+  fi
+
+  fail 'required command not found: sha256sum or shasum'
+}
+
 wait_for_crate_url() {
   local url="$1"
   local attempt
@@ -93,7 +109,7 @@ cargo package
 CRATE_FILE="$REPO_ROOT/target/package/cli-bot-$VERSION.crate"
 [[ -f "$CRATE_FILE" ]] || fail "expected packaged crate not found: $CRATE_FILE"
 
-CRATE_SHA256="$(compute_sha256 "$CRATE_FILE")"
+LOCAL_CRATE_SHA256="$(compute_sha256 "$CRATE_FILE")"
 CRATE_URL="https://static.crates.io/crates/cli-bot/cli-bot-$VERSION.crate"
 
 printf 'Publishing cli-bot %s to crates.io\n' "$VERSION"
@@ -101,6 +117,9 @@ cargo publish
 
 printf 'Waiting for published crate to become available: %s\n' "$CRATE_URL"
 wait_for_crate_url "$CRATE_URL" || fail "published crate did not become available in time: $CRATE_URL"
+
+printf 'Computing checksum from published crate artifact\n'
+CRATE_SHA256="$(compute_sha256_from_url "$CRATE_URL")"
 
 printf 'Updating Homebrew formula: %s\n' "$HOMEBREW_FORMULA_FILE"
 NEW_URL="url \"$CRATE_URL\"" \
@@ -111,6 +130,7 @@ printf '\nRelease complete.\n'
 printf 'Published version: %s\n' "$VERSION"
 printf 'Crate URL: %s\n' "$CRATE_URL"
 printf 'Crate SHA256: %s\n' "$CRATE_SHA256"
+printf 'Local package SHA256: %s\n' "$LOCAL_CRATE_SHA256"
 printf 'Updated formula: %s\n' "$HOMEBREW_FORMULA_FILE"
 printf '\nNext steps:\n'
 printf '1. Review and commit the Homebrew formula update.\n'

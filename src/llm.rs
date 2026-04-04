@@ -3,6 +3,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::config::OllamaConfig;
+use crate::environment::ResolvedEnvironment;
 use crate::output::OutputStyler;
 use crate::planner::CommandPlan;
 
@@ -24,6 +25,7 @@ impl OllamaClient {
         request: &str,
         destructive_substrings: &[String],
         preferred_editor: Option<&str>,
+        environment: &ResolvedEnvironment,
         verbose: bool,
         output: &OutputStyler,
     ) -> Result<CommandPlan> {
@@ -33,7 +35,12 @@ impl OllamaClient {
         );
         let request_body = GenerateRequest {
             model: &self.config.model,
-            prompt: build_prompt(request, destructive_substrings, preferred_editor),
+            prompt: build_prompt(
+                request,
+                destructive_substrings,
+                preferred_editor,
+                environment,
+            ),
             system: &self.config.system_prompt,
             stream: false,
             options: GenerateOptions {
@@ -205,10 +212,23 @@ fn build_prompt(
     request: &str,
     destructive_substrings: &[String],
     preferred_editor: Option<&str>,
+    environment: &ResolvedEnvironment,
 ) -> String {
     let destructive_examples =
         serde_json::to_string(destructive_substrings).unwrap_or_else(|_| "[]".to_string());
     let preferred_editor = preferred_editor.unwrap_or("not specified");
+    let distro = environment
+        .distro
+        .map(|distro| distro.as_str())
+        .unwrap_or("not applicable");
+    let detected_package_manager = environment
+        .detected_package_manager
+        .map(|package_manager| package_manager.as_str())
+        .unwrap_or("unknown");
+    let effective_package_manager = environment
+        .effective_package_manager
+        .map(|package_manager| package_manager.as_str())
+        .unwrap_or("unknown");
 
     format!(
         concat!(
@@ -219,11 +239,18 @@ fn build_prompt(
             "Set potentially_destructive to true when the command could delete, overwrite, stop, or reconfigure something important. ",
             "When there are multiple command choices, mark the single best choice with recommended=true and set recommended=false for the others. ",
             "When there is only one command, set recommended=true. ",
+            "Operating system: {os}. Linux distribution: {distro}. Detected package manager: {detected_package_manager}. Effective package manager: {effective_package_manager}. ",
+            "For package-related requests such as listing installed packages, installing software, removing software, or searching package repositories, use commands appropriate for this environment and prefer the effective package manager. ",
+            "Use the package manager's canonical syntax and only pass the package name as the package argument. Examples: `brew install btop`, `paru -S btop`, `pacman -Q`, `apt list --installed`. ",
             "Preferred terminal editor: {preferred_editor}. If the user asks to edit a file, prefer commands that open that editor. ",
             "Known destructive patterns: {destructive_examples}. ",
             "User request: {request}"
         ),
         destructive_examples = destructive_examples,
+        os = environment.os.as_str(),
+        distro = distro,
+        detected_package_manager = detected_package_manager,
+        effective_package_manager = effective_package_manager,
         preferred_editor = preferred_editor,
         request = request,
     )
@@ -239,6 +266,9 @@ fn extract_json_document(response: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{GenerateRequest, build_prompt, extract_json_document};
+    use crate::environment::{
+        OperatingSystem, PackageManager, PackageManagerSource, ResolvedEnvironment,
+    };
 
     #[test]
     fn extracts_plain_json_document() {
@@ -262,7 +292,12 @@ mod tests {
 
     #[test]
     fn prompt_requires_potentially_destructive_boolean() {
-        let prompt = build_prompt("delete the target directory", &["rm -rf".into()], None);
+        let prompt = build_prompt(
+            "delete the target directory",
+            &["rm -rf".into()],
+            None,
+            &sample_environment(),
+        );
 
         assert!(prompt.contains("\"potentially_destructive\":false"));
         assert!(prompt.contains("\"recommended\":true"));
@@ -272,17 +307,33 @@ mod tests {
 
     #[test]
     fn prompt_includes_preferred_editor() {
-        let prompt = build_prompt("edit my git config file", &[], Some("nvim"));
+        let prompt = build_prompt(
+            "edit my git config file",
+            &[],
+            Some("nvim"),
+            &sample_environment(),
+        );
 
         assert!(prompt.contains("Preferred terminal editor: nvim"));
         assert!(prompt.contains("prefer commands that open that editor"));
     }
 
     #[test]
+    fn prompt_includes_environment_context() {
+        let prompt = build_prompt("install btop", &[], None, &sample_environment());
+
+        assert!(prompt.contains("Operating system: linux"));
+        assert!(prompt.contains("Linux distribution: arch"));
+        assert!(prompt.contains("Detected package manager: paru"));
+        assert!(prompt.contains("Effective package manager: paru"));
+        assert!(prompt.contains("For package-related requests"));
+    }
+
+    #[test]
     fn generate_request_serializes_prompt_for_verbose_logging() {
         let request = GenerateRequest {
             model: "lfm2:latest",
-            prompt: build_prompt("ping google", &[], Some("nvim")),
+            prompt: build_prompt("ping google", &[], Some("nvim"), &sample_environment()),
             system: "Return JSON only",
             stream: false,
             options: super::GenerateOptions { temperature: 0.0 },
@@ -292,5 +343,16 @@ mod tests {
 
         assert!(json.contains("lfm2:latest"));
         assert!(json.contains("ping google"));
+    }
+
+    fn sample_environment() -> ResolvedEnvironment {
+        ResolvedEnvironment {
+            os: OperatingSystem::Linux,
+            distro: Some(crate::environment::LinuxDistro::Arch),
+            detected_package_manager: Some(PackageManager::Paru),
+            effective_package_manager: Some(PackageManager::Paru),
+            package_manager_source: Some(PackageManagerSource::Auto),
+            effective_package_manager_available: true,
+        }
     }
 }

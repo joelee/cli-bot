@@ -1,4 +1,5 @@
 mod config;
+mod environment;
 mod llm;
 mod output;
 mod planner;
@@ -13,6 +14,7 @@ use clap::Parser;
 use dialoguer::{Confirm, Input, Select};
 
 use crate::config::{AppConfig, is_known_editor, resolve_config_path};
+use crate::environment::{PackageManagerSource, resolve_environment};
 use crate::llm::OllamaClient;
 pub use crate::output::{ColorMode, OutputStyler};
 use crate::planner::{
@@ -64,16 +66,23 @@ pub struct Cli {
     /// Print detailed actions and full Ollama responses for debugging.
     #[arg(short = 'v', long)]
     pub verbose: bool,
+
+    /// Hide cli-bot informational output and only show the selected command's output.
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
     let total_start = Instant::now();
     let output = OutputStyler::new(cli.color.clone());
+    let show_output = !cli.quiet;
+    let verbose = cli.verbose && show_output;
     let config_path = resolve_config_path(cli.config)?;
     let mut config = AppConfig::load(&config_path)?;
     apply_model_override(&mut config, cli.model.as_deref())?;
+    let resolved_environment = resolve_environment(&config.environment)?;
 
-    if cli.verbose {
+    if verbose {
         eprintln!(
             "{}",
             output.stderr_dim(&format!("[verbose] config path: {}", config_path.display()))
@@ -89,15 +98,59 @@ pub fn run(cli: Cli) -> Result<()> {
             "{}",
             output.stderr_dim(&format!("[verbose] ollama model: {}", config.ollama.model))
         );
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!(
+                "[verbose] environment os: {}",
+                resolved_environment.os.as_str()
+            ))
+        );
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!(
+                "[verbose] environment distro: {}",
+                resolved_environment
+                    .distro
+                    .map(|distro| distro.as_str())
+                    .unwrap_or("not applicable")
+            ))
+        );
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!(
+                "[verbose] detected package manager: {}",
+                resolved_environment
+                    .detected_package_manager
+                    .map(|package_manager| package_manager.as_str())
+                    .unwrap_or("unknown")
+            ))
+        );
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!(
+                "[verbose] effective package manager: {}",
+                resolved_environment
+                    .effective_package_manager
+                    .map(|package_manager| package_manager.as_str())
+                    .unwrap_or("unknown")
+            ))
+        );
     }
 
     if cli.check {
-        return run_check(config_path, config, cli.verbose, &output);
+        return run_check(
+            config_path,
+            config,
+            resolved_environment,
+            verbose,
+            show_output,
+            &output,
+        );
     }
 
     let planner = OllamaClient::new(config.ollama.clone());
     let preferred_editor = config.execution.resolved_preferred_editor();
-    if cli.verbose {
+    if verbose {
         eprintln!(
             "{}",
             output.stderr_dim(&format!(
@@ -113,7 +166,7 @@ pub fn run(cli: Cli) -> Result<()> {
         .map(normalize_request)
         .transpose()?
         .map_or_else(prompt_for_request, Ok)?;
-    if cli.verbose {
+    if verbose {
         eprintln!(
             "{}",
             output.stderr_dim(&format!("[verbose] natural language request: {request}"))
@@ -124,19 +177,18 @@ pub fn run(cli: Cli) -> Result<()> {
         &request,
         &config.safety.destructive_substrings,
         preferred_editor.as_deref(),
-        cli.verbose,
+        &resolved_environment,
+        verbose,
         &output,
     )?;
     let planning_elapsed = planning_start.elapsed();
 
-    if cli.print_plan {
+    if cli.print_plan && show_output {
         let plan_json = serde_json::to_string_pretty(&plan)?;
         println!("{plan_json}");
     }
 
-    if cli.verbose
-        && let Some(summary) = plan.summary.as_deref()
-    {
+    if verbose && let Some(summary) = plan.summary.as_deref() {
         eprintln!(
             "{}",
             output.stderr_dim(&format!("[verbose] planner summary: {summary}"))
@@ -146,7 +198,7 @@ pub fn run(cli: Cli) -> Result<()> {
     let auto_select_best = config.ui.auto_select_recommended || cli.auto_select_best;
     let selected = select_command(&plan, &config.ui.selection_prompt, auto_select_best)?;
 
-    if auto_select_best && plan.commands.len() > 1 && selected.recommended {
+    if show_output && auto_select_best && plan.commands.len() > 1 && selected.recommended {
         println!(
             "{} {}",
             output.key("Recommended command:"),
@@ -154,7 +206,7 @@ pub fn run(cli: Cli) -> Result<()> {
         );
     }
 
-    if config.ui.show_command_before_execution {
+    if show_output && config.ui.show_command_before_execution {
         println!(
             "{} {}",
             output.key("Selected command:"),
@@ -162,12 +214,12 @@ pub fn run(cli: Cli) -> Result<()> {
         );
     }
 
-    if let Some(rationale) = selected.rationale.as_deref() {
+    if show_output && let Some(rationale) = selected.rationale.as_deref() {
         println!("{} {rationale}", output.dim("Why:"));
     }
 
     if cli.dry_run {
-        if cli.benchmark {
+        if cli.benchmark && show_output {
             print_benchmark_report(
                 &output,
                 &config.ollama.model,
@@ -190,8 +242,10 @@ pub fn run(cli: Cli) -> Result<()> {
             .context("failed to capture confirmation from terminal")?;
 
         if !approved {
-            println!("{}", output.warn("Command execution cancelled."));
-            if cli.benchmark {
+            if show_output {
+                println!("{}", output.warn("Command execution cancelled."));
+            }
+            if cli.benchmark && show_output {
                 print_benchmark_report(
                     &output,
                     &config.ollama.model,
@@ -206,7 +260,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
     let execution_elapsed = shell::execute(&selected.command, &config.execution)?;
 
-    if cli.benchmark {
+    if cli.benchmark && show_output {
         print_benchmark_report(
             &output,
             &config.ollama.model,
@@ -222,50 +276,151 @@ pub fn run(cli: Cli) -> Result<()> {
 fn run_check(
     config_path: PathBuf,
     config: AppConfig,
+    resolved_environment: crate::environment::ResolvedEnvironment,
     verbose: bool,
+    show_output: bool,
     output: &OutputStyler,
 ) -> Result<()> {
     let mut failures = Vec::new();
 
-    println!("{}", output.heading("Check results:"));
-    println!(
-        "{} {} ({})",
-        output.key("config:"),
-        output.ok("ok"),
-        config_path.display()
-    );
+    if show_output {
+        println!("{}", output.heading("Check results:"));
+        println!(
+            "{} {} ({})",
+            output.key("config:"),
+            output.ok("ok"),
+            config_path.display()
+        );
+    }
 
     let planner = OllamaClient::new(config.ollama.clone());
     match planner.check_service(verbose, output) {
         Ok(status) if status.model_available => {
-            println!(
-                "{} {} ({}; model `{}` available)",
-                output.key("ollama:"),
-                output.ok("ok"),
-                config.ollama.base_url,
-                config.ollama.model
-            );
+            if show_output {
+                println!(
+                    "{} {} ({}; model `{}` available)",
+                    output.key("ollama:"),
+                    output.ok("ok"),
+                    config.ollama.base_url,
+                    config.ollama.model
+                );
+            }
         }
         Ok(_) => {
             let message = format!(
                 "service reachable at {}, but model `{}` is not available",
                 config.ollama.base_url, config.ollama.model
             );
-            println!(
-                "{} {} ({message})",
-                output.key("ollama:"),
-                output.error("error")
-            );
+            if show_output {
+                println!(
+                    "{} {} ({message})",
+                    output.key("ollama:"),
+                    output.error("error")
+                );
+            }
             failures.push(message);
         }
         Err(error) => {
             let message = format!("failed to reach {}: {error:#}", config.ollama.base_url);
-            println!(
-                "{} {} ({message})",
-                output.key("ollama:"),
-                output.error("error")
-            );
+            if show_output {
+                println!(
+                    "{} {} ({message})",
+                    output.key("ollama:"),
+                    output.error("error")
+                );
+            }
             failures.push(message);
+        }
+    }
+
+    if show_output {
+        println!(
+            "{} {} ({})",
+            output.key("os:"),
+            output.ok("ok"),
+            resolved_environment.os.as_str()
+        );
+
+        match resolved_environment.distro {
+            Some(distro) => println!(
+                "{} {} ({})",
+                output.key("distro:"),
+                if distro.as_str() == "unknown" {
+                    output.warn("warn")
+                } else {
+                    output.ok("ok")
+                },
+                distro.as_str()
+            ),
+            None => println!(
+                "{} {} (not applicable)",
+                output.key("distro:"),
+                output.ok("ok")
+            ),
+        }
+
+        match resolved_environment.detected_package_manager {
+            Some(package_manager) if package_manager.as_str() != "unknown" => println!(
+                "{} {} ({})",
+                output.key("package_manager_detected:"),
+                output.ok("ok"),
+                package_manager.as_str()
+            ),
+            _ => println!(
+                "{} {} (unknown)",
+                output.key("package_manager_detected:"),
+                output.warn("warn")
+            ),
+        }
+    }
+
+    match resolved_environment.effective_package_manager {
+        Some(package_manager)
+            if resolved_environment.effective_package_manager_available
+                || package_manager.as_str() == "unknown" =>
+        {
+            if show_output {
+                let source = resolved_environment
+                    .package_manager_source
+                    .map(PackageManagerSource::as_str)
+                    .unwrap_or("unknown");
+                let tone = if package_manager.as_str() == "unknown" {
+                    output.warn("warn")
+                } else {
+                    output.ok("ok")
+                };
+
+                println!(
+                    "{} {} ({}; {})",
+                    output.key("package_manager_effective:"),
+                    tone,
+                    package_manager.as_str(),
+                    source
+                );
+            }
+        }
+        Some(package_manager) => {
+            let message = format!(
+                "`{}` selected as the effective package manager but it is not available on PATH",
+                package_manager.as_str()
+            );
+            if show_output {
+                println!(
+                    "{} {} ({message})",
+                    output.key("package_manager_effective:"),
+                    output.error("error")
+                );
+            }
+            failures.push(message);
+        }
+        None => {
+            if show_output {
+                println!(
+                    "{} {} (unknown)",
+                    output.key("package_manager_effective:"),
+                    output.warn("warn")
+                );
+            }
         }
     }
 
@@ -282,30 +437,38 @@ fn run_check(
 
     match resolved_editor {
         Some(editor) if is_known_editor(&editor) => {
-            println!("{} {} ({editor})", output.key("editor:"), output.ok("ok"));
+            if show_output {
+                println!("{} {} ({editor})", output.key("editor:"), output.ok("ok"));
+            }
         }
         Some(editor) => {
             let message = format!("`{editor}` is not available on PATH");
-            println!(
-                "{} {} ({message})",
-                output.key("editor:"),
-                output.error("error")
-            );
+            if show_output {
+                println!(
+                    "{} {} ({message})",
+                    output.key("editor:"),
+                    output.error("error")
+                );
+            }
             failures.push(message);
         }
         None => {
             let message = "no preferred editor configured and $EDITOR is not set".to_string();
-            println!(
-                "{} {} ({message})",
-                output.key("editor:"),
-                output.error("error")
-            );
+            if show_output {
+                println!(
+                    "{} {} ({message})",
+                    output.key("editor:"),
+                    output.error("error")
+                );
+            }
             failures.push(message);
         }
     }
 
     if failures.is_empty() {
-        println!("{} {}", output.key("check:"), output.ok("ok"));
+        if show_output {
+            println!("{} {}", output.key("check:"), output.ok("ok"));
+        }
         Ok(())
     } else {
         bail!("environment check failed")
@@ -428,7 +591,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{apply_model_override, duration_to_ms, normalize_request, select_command};
-    use crate::config::{AppConfig, ExecutionConfig, OllamaConfig, SafetyConfig, UiConfig};
+    use crate::config::{
+        AppConfig, EnvironmentConfig, ExecutionConfig, OllamaConfig, SafetyConfig, UiConfig,
+    };
     use crate::planner::{CommandPlan, PlannedCommand};
 
     #[test]
@@ -515,6 +680,7 @@ mod tests {
                 temperature: 0.0,
                 system_prompt: "Return JSON only".into(),
             },
+            environment: EnvironmentConfig::default(),
             safety: SafetyConfig {
                 require_confirmation: true,
                 destructive_substrings: vec![],
