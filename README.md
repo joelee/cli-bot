@@ -1,6 +1,6 @@
 # cli-bot
 
-`cli-bot` is a Rust CLI that turns natural-language requests into shell commands using Ollama.
+`cli-bot` is a Rust CLI that turns natural-language requests into shell commands using Ollama, with awareness of the user's OS, Linux distro, and package manager.
 
 Instead of remembering exact flags, command variants, and editor invocations, you can describe what you want in plain English and let `cli-bot` translate that intent into a shell command you can inspect, benchmark, approve, and run.
 
@@ -25,7 +25,7 @@ This assumes:
 - the Ollama service is running locally
 - `cli-bot` can create a default config file on first run if needed
 
-See `docs/install-ollama.md` and `docs/configuration.md` for the full setup.
+See [Install Ollama](docs/install-ollama.md) and [Configuration](docs/configuration.md) for the full setup.
 
 ## Why This Exists
 
@@ -65,6 +65,7 @@ It is meant to feel less like a chatbot and more like a sharp command-line copil
 
 - translates plain-English requests into shell commands with Ollama
 - supports configurable local models through `cli-bot.toml`
+- understands the user's OS and preferred package manager for package-related requests
 - asks for approval before running potentially destructive commands
 - lets the user pick between multiple command choices
 - can optionally auto-select the LLM-recommended best command
@@ -96,6 +97,32 @@ cli-bot "Show the ten largest files in the current directory"
 ```
 
 Possible output plan could include commands using `find`, `du`, and `sort`.
+
+### Package Management
+
+On macOS with Homebrew:
+
+```bash
+cli-bot "Install btop"
+```
+
+Expected command:
+
+```bash
+brew install btop
+```
+
+On Arch Linux with `paru` available:
+
+```bash
+cli-bot "List all my installed packages"
+```
+
+Expected command could be:
+
+```bash
+paru -Q
+```
 
 ### Archives
 
@@ -159,7 +186,7 @@ If the selected command is destructive, `cli-bot` asks for explicit approval bef
 
 `cli-bot` requires a running Ollama endpoint. Before using the CLI, install Ollama, start the local service, and pull the model you want to use.
 
-See `docs/install-ollama.md` for a step-by-step setup guide.
+See [Install Ollama](docs/install-ollama.md) for a step-by-step setup guide.
 
 ### From Homebrew on macOS
 
@@ -259,7 +286,7 @@ Example:
 ollama pull lfm2:latest
 ```
 
-Detailed instructions are in `docs/install-ollama.md`.
+Detailed instructions are in [Install Ollama](docs/install-ollama.md).
 
 ## Configuration
 
@@ -268,6 +295,8 @@ If no config file is provided and none is found in the normal lookup locations, 
 ```text
 $HOME/.config/cli-bot/cli-bot.toml
 ```
+
+You can also configure the environment profile used for package-related requests, including `preferred_package_manager`.
 
 Install the config into one of the default lookup locations.
 
@@ -409,19 +438,21 @@ If `NO_COLOR` is set, color output is disabled.
 - `--benchmark`: print planning, execution, and total elapsed time in milliseconds
 - `--check`: verify config, Ollama connectivity, model availability, and editor resolution
 - `--color <auto|always|never>`: control ANSI color output
+- `--quiet`: hide cli-bot informational output and only show the selected command output
 - `--verbose`: print detailed actions and full Ollama responses for debugging
 
 ## Documentation
 
-- `docs/installation.md`
-- `docs/install-ollama.md`
-- `docs/homebrew.md`
-- `docs/crates-release.md`
-- `docs/publishing.md`
-- `docs/architecture.md`
-- `docs/configuration.md`
-- `docs/usage.md`
-- `docs/testing.md`
+- [Changelog](CHANGELOG.md)
+- [Installation](docs/installation.md)
+- [Install Ollama](docs/install-ollama.md)
+- [Homebrew](docs/homebrew.md)
+- [crates.io Release](docs/crates-release.md)
+- [Publishing](docs/publishing.md)
+- [Architecture](docs/architecture.md)
+- [Configuration](docs/configuration.md)
+- [Usage](docs/usage.md)
+- [Testing](docs/testing.md)
 
 ## Developer Setup
 

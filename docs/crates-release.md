@@ -81,7 +81,14 @@ The script:
 - runs `fmt`, `clippy`, `test`, and `package`
 - publishes to crates.io
 - waits for the crate URL to become available
-- updates the Homebrew formula file with the new crate URL and checksum
+- computes the checksum from the published crate artifact
+- updates the Homebrew formula file with the new crate URL and published checksum
+
+Important:
+
+- do not use the SHA256 of the local `target/package/*.crate` file for Homebrew
+- Homebrew should use the checksum of the crate downloaded from crates.io
+- `scripts/release.sh` now computes the checksum from the published crates.io artifact automatically
 
 Example `.env`:
 
@@ -120,7 +127,7 @@ After the new crate version is live:
 3. Change the `sha256` to the published checksum
 4. Push the Homebrew tap update
 
-See `docs/homebrew.md` for the Homebrew side of the release.
+See [Homebrew](homebrew.md) for the Homebrew side of the release.
 
 ## Typical Manual Release Session
 

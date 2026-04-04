@@ -6,12 +6,13 @@
 
 1. Parse CLI arguments.
 2. Resolve the config path from `--config`, `${HOME}/.config/cli-bot/cli-bot.toml`, or `/etc/cli-bot.toml`.
-3. If `--check` is used, validate config, Ollama reachability, model availability, and editor resolution.
-4. Otherwise send the user request to Ollama.
-5. Parse the structured response into a command plan.
-6. Ask the user to select a command when multiple options are returned.
-7. Ask for confirmation when the command is potentially destructive.
-8. Execute the final command through the configured shell.
+3. Resolve the runtime environment profile, including OS, distro, and effective package manager.
+4. If `--check` is used, validate config, Ollama reachability, environment resolution, model availability, and editor resolution.
+5. Otherwise send the user request to Ollama.
+6. Parse the structured response into a command plan.
+7. Ask the user to select a command when multiple options are returned.
+8. Ask for confirmation when the command is potentially destructive.
+9. Execute the final command through the configured shell.
 
 ## Modules
 
@@ -27,6 +28,7 @@
 - The LLM is asked to return JSON so downstream code stays deterministic.
 - Destructive-command detection combines an LLM-provided `potentially_destructive` boolean and configured substring matching.
 - The planner can mark one command as `recommended`, which the CLI may auto-select when configured to do so.
+- The planner prompt includes a resolved environment profile so package-related requests use commands appropriate to the user's platform and package manager.
 - The planner prompt includes the resolved preferred editor from config or `$EDITOR` so edit requests can use the user's normal tool.
 - The configured Ollama model can be overridden per invocation with `--model` before health checks or planning run.
 - Human-facing status output is styled through a small output module with `--color auto|always|never` control.

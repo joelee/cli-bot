@@ -2,7 +2,7 @@
 
 `cli-bot` requires a running Ollama endpoint. Install Ollama, start the local service, and pull the configured model before first use.
 
-See `docs/install-ollama.md` for the Ollama setup steps.
+See [Install Ollama](install-ollama.md) for the Ollama setup steps.
 
 ## macOS With Homebrew
 

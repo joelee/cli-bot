@@ -13,6 +13,8 @@ const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../cli-bot.toml");
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub environment: EnvironmentConfig,
     pub safety: SafetyConfig,
     pub ui: UiConfig,
     pub execution: ExecutionConfig,
@@ -105,6 +107,30 @@ pub struct OllamaConfig {
     pub model: String,
     pub temperature: f32,
     pub system_prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnvironmentConfig {
+    #[serde(default = "default_auto_setting")]
+    pub os: String,
+    #[serde(default = "default_auto_setting")]
+    pub distro: String,
+    #[serde(default = "default_auto_setting")]
+    pub preferred_package_manager: String,
+}
+
+impl Default for EnvironmentConfig {
+    fn default() -> Self {
+        Self {
+            os: default_auto_setting(),
+            distro: default_auto_setting(),
+            preferred_package_manager: default_auto_setting(),
+        }
+    }
+}
+
+fn default_auto_setting() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -225,9 +251,14 @@ mod tests {
             r#"
 [ollama]
 base_url = "http://127.0.0.1:11434"
-            model = "lfm2:latest"
+model = "lfm2:latest"
 temperature = 0.0
 system_prompt = "Return JSON only"
+
+[environment]
+os = "auto"
+distro = "auto"
+preferred_package_manager = "auto"
 
 [safety]
 require_confirmation = true
@@ -248,10 +279,46 @@ preferred_editor = "nvim"
         .expect("config should parse");
 
         assert_eq!(config.ollama.model, "lfm2:latest");
+        assert_eq!(config.environment.os, "auto");
+        assert_eq!(config.environment.distro, "auto");
+        assert_eq!(config.environment.preferred_package_manager, "auto");
         assert!(config.safety.require_confirmation);
         assert_eq!(config.execution.shell_arg, "-c");
         assert_eq!(config.execution.preferred_editor.as_deref(), Some("nvim"));
         assert!(!config.ui.auto_select_recommended);
+    }
+
+    #[test]
+    fn defaults_environment_when_section_missing() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "lfm2:latest"
+temperature = 0.0
+system_prompt = "Return JSON only"
+
+[safety]
+require_confirmation = true
+destructive_substrings = ["rm -rf"]
+
+[ui]
+selection_prompt = "Choose"
+approval_prompt = "Approve?"
+show_command_before_execution = true
+auto_select_recommended = false
+
+[execution]
+shell = "/bin/sh"
+shell_arg = "-c"
+preferred_editor = "nvim"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.environment.os, "auto");
+        assert_eq!(config.environment.distro, "auto");
+        assert_eq!(config.environment.preferred_package_manager, "auto");
     }
 
     #[test]
