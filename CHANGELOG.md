@@ -4,6 +4,24 @@ All notable changes to `cli-bot` will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [0.2.1] - 2026-04-04
+
+### Added
+
+- Command-plan `unresolved` fallback for requests that should not be forced into guessed commands
+- Second-pass text response generation when the command planner marks a request as unresolved
+- `--models-benchmark` to benchmark configured models across configured queries and print a Markdown report
+- Host system details at the top of the models benchmark report, including OS, kernel, CPU, GPU, and memory
+- Best-effort GPU VRAM reporting in the models benchmark host section
+- Per-model benchmark summary, success rate, and ranking sections in the Markdown benchmark report
+- [Roadmap](docs/roadmap.md) for future features beyond the current release scope
+
+### Changed
+
+- CLI command generation remains the priority, with direct text responses only after the command planner explicitly marks a request as unresolved
+- Package-manager instructions are now restricted to clearly package-related requests to reduce false positives
+- Documentation now links to the published benchmark report that justifies `lfm2:latest` as the default model
+
 ## [0.2.0] - 2026-04-04
 
 ### Added

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::SafetyConfig;
 
@@ -6,6 +6,9 @@ use crate::config::SafetyConfig;
 pub struct CommandPlan {
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    pub unresolved: bool,
+    #[serde(default, deserialize_with = "deserialize_commands")]
     pub commands: Vec<PlannedCommand>,
 }
 
@@ -49,6 +52,34 @@ pub fn command_requires_confirmation(command: &PlannedCommand, safety: &SafetyCo
         .destructive_substrings
         .iter()
         .any(|pattern| command_text.contains(&pattern.to_ascii_lowercase()))
+}
+
+fn deserialize_commands<'de, D>(deserializer: D) -> Result<Vec<PlannedCommand>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum CommandInput {
+        Structured(PlannedCommand),
+        Simple(String),
+    }
+
+    let inputs = Vec::<CommandInput>::deserialize(deserializer)?;
+
+    Ok(inputs
+        .into_iter()
+        .map(|input| match input {
+            CommandInput::Structured(command) => command,
+            CommandInput::Simple(command) => PlannedCommand {
+                description: command.clone(),
+                command,
+                potentially_destructive: false,
+                recommended: false,
+                rationale: None,
+            },
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -111,6 +142,7 @@ mod tests {
     fn returns_recommended_command_when_present() {
         let plan = CommandPlan {
             summary: None,
+            unresolved: false,
             commands: vec![
                 PlannedCommand {
                     command: "ping google.com".into(),
@@ -132,5 +164,18 @@ mod tests {
         let command = recommended_command(&plan).expect("recommended command should exist");
 
         assert_eq!(command.command, "ping -c 5 google.com");
+    }
+
+    #[test]
+    fn parses_simple_string_command_entries() {
+        let plan = serde_json::from_str::<CommandPlan>(
+            r#"{"summary":"Ping","unresolved":false,"commands":["ping -c 5 google.com"]}"#,
+        )
+        .expect("plan should parse");
+
+        assert_eq!(plan.commands.len(), 1);
+        assert_eq!(plan.commands[0].command, "ping -c 5 google.com");
+        assert_eq!(plan.commands[0].description, "ping -c 5 google.com");
+        assert!(!plan.commands[0].recommended);
     }
 }

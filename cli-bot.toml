@@ -48,3 +48,21 @@ auto_select_recommended = false
 shell = "/bin/sh"
 shell_arg = "-c"
 preferred_editor = "nvim"
+
+[models_benchmark]
+models = [
+  "lfm2:latest",
+  "qwen3.5:latest",
+  "llama3.2:latest",
+  "gemma4:latest",
+  "gemma4:26b"  
+]
+queries = [
+  "Ping google five times",
+  "Print the last git log message",
+  "What is my external IP address?",
+  "Is neovim installed?",
+  "230*(123-22)",
+  "List all markdown files recursively in my home directory",
+  "What is the purpose of life?"
+]

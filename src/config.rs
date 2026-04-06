@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub safety: SafetyConfig,
     pub ui: UiConfig,
     pub execution: ExecutionConfig,
+    #[serde(default)]
+    pub models_benchmark: ModelsBenchmarkConfig,
 }
 
 impl AppConfig {
@@ -156,6 +158,14 @@ pub struct ExecutionConfig {
     pub preferred_editor: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ModelsBenchmarkConfig {
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub queries: Vec<String>,
+}
+
 impl ExecutionConfig {
     pub fn resolved_preferred_editor(&self) -> Option<String> {
         resolve_preferred_editor(
@@ -241,8 +251,9 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::{
-        AppConfig, ExecutionConfig, default_config_paths_for_home, is_known_editor_in_path,
-        resolve_config_path, resolve_config_path_for_home, resolve_preferred_editor,
+        AppConfig, ExecutionConfig, ModelsBenchmarkConfig, default_config_paths_for_home,
+        is_known_editor_in_path, resolve_config_path, resolve_config_path_for_home,
+        resolve_preferred_editor,
     };
 
     #[test]
@@ -274,6 +285,10 @@ auto_select_recommended = false
 shell = "/bin/sh"
 shell_arg = "-c"
 preferred_editor = "nvim"
+
+[models_benchmark]
+models = ["lfm2:latest", "qwen3.5:latest"]
+queries = ["Ping google five times", "Install btop"]
 "#,
         )
         .expect("config should parse");
@@ -286,6 +301,14 @@ preferred_editor = "nvim"
         assert_eq!(config.execution.shell_arg, "-c");
         assert_eq!(config.execution.preferred_editor.as_deref(), Some("nvim"));
         assert!(!config.ui.auto_select_recommended);
+        assert_eq!(
+            config.models_benchmark.models,
+            vec!["lfm2:latest", "qwen3.5:latest"]
+        );
+        assert_eq!(
+            config.models_benchmark.queries,
+            vec!["Ping google five times", "Install btop"]
+        );
     }
 
     #[test]
@@ -319,6 +342,8 @@ preferred_editor = "nvim"
         assert_eq!(config.environment.os, "auto");
         assert_eq!(config.environment.distro, "auto");
         assert_eq!(config.environment.preferred_package_manager, "auto");
+        assert!(config.models_benchmark.models.is_empty());
+        assert!(config.models_benchmark.queries.is_empty());
     }
 
     #[test]
@@ -402,6 +427,14 @@ preferred_editor = "nvim"
         };
 
         assert_eq!(config.resolved_preferred_editor().as_deref(), Some("nano"));
+    }
+
+    #[test]
+    fn models_benchmark_defaults_empty() {
+        let config = ModelsBenchmarkConfig::default();
+
+        assert!(config.models.is_empty());
+        assert!(config.queries.is_empty());
     }
 
     #[test]
