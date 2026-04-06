@@ -9,10 +9,11 @@
 3. Resolve the runtime environment profile, including OS, distro, and effective package manager.
 4. If `--check` is used, validate config, Ollama reachability, environment resolution, model availability, and editor resolution.
 5. Otherwise send the user request to Ollama.
-6. Parse the structured response into a command plan.
-7. Ask the user to select a command when multiple options are returned.
-8. Ask for confirmation when the command is potentially destructive.
-9. Execute the final command through the configured shell.
+6. Parse the structured response into a command plan with an `unresolved` fallback flag.
+7. If unresolved, make a second LLM request for a plain text response.
+8. If a command plan is returned, ask the user to select a command when multiple options are returned.
+9. Ask for confirmation when the command is potentially destructive.
+10. Execute the final command through the configured shell.
 
 ## Modules
 
@@ -26,6 +27,8 @@
 ## Design Notes
 
 - The LLM is asked to return JSON so downstream code stays deterministic.
+- The primary planner returns command plans only, plus an `unresolved` flag when it should not guess a command.
+- A second LLM pass produces a plain text response only when the command planner returns `unresolved = true`.
 - Destructive-command detection combines an LLM-provided `potentially_destructive` boolean and configured substring matching.
 - The planner can mark one command as `recommended`, which the CLI may auto-select when configured to do so.
 - The planner prompt includes a resolved environment profile so package-related requests use commands appropriate to the user's platform and package manager.

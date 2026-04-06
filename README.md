@@ -1,6 +1,6 @@
 # cli-bot
 
-`cli-bot` is a Rust CLI that turns natural-language requests into shell commands using Ollama, with awareness of the user's OS, Linux distro, and package manager.
+`cli-bot` is a Rust CLI that turns natural-language requests into shell commands using Ollama, with awareness of the user's OS, Linux distro, and package manager. Shell command generation remains the priority, with a text-response fallback only when the planner marks a request as unresolved.
 
 Instead of remembering exact flags, command variants, and editor invocations, you can describe what you want in plain English and let `cli-bot` translate that intent into a shell command you can inspect, benchmark, approve, and run.
 
@@ -26,6 +26,8 @@ This assumes:
 - `cli-bot` can create a default config file on first run if needed
 
 See [Install Ollama](docs/install-ollama.md) and [Configuration](docs/configuration.md) for the full setup.
+
+If you encounter any issues, run `cli-bot --check` to identify the issues. 
 
 ## Why This Exists
 
@@ -69,6 +71,7 @@ It is meant to feel less like a chatbot and more like a sharp command-line copil
 - asks for approval before running potentially destructive commands
 - lets the user pick between multiple command choices
 - can optionally auto-select the LLM-recommended best command
+- can fall back to a direct text response when a request cannot be resolved into a shell command safely
 - supports benchmarking to compare models by latency
 - supports verbose debugging to inspect full Ollama responses
 - respects a preferred editor from config or `$EDITOR`
@@ -88,6 +91,18 @@ Expected command:
 
 ```bash
 ping -c 5 google.com
+```
+
+### Text Response
+
+```bash
+cli-bot "spell mantainence"
+```
+
+Expected response:
+
+```text
+maintenance
 ```
 
 ### Disk Usage
@@ -182,6 +197,10 @@ cli-bot "Delete the target directory"
 
 If the selected command is destructive, `cli-bot` asks for explicit approval before execution.
 
+### Unresolved Fallback
+
+If a request cannot be safely resolved into a shell command, `cli-bot` can fall back to a direct text response instead of guessing an incorrect command.
+
 ## Installation
 
 `cli-bot` requires a running Ollama endpoint. Before using the CLI, install Ollama, start the local service, and pull the model you want to use.
@@ -211,6 +230,8 @@ Before first use, make sure Ollama is running and the default model is available
 ollama pull lfm2:latest
 cli-bot --check
 ```
+
+`--check` now also reports whether the current terminal environment supports interactive prompts and command selection.
 
 ### From crates.io
 
@@ -359,6 +380,12 @@ One of the practical uses of `cli-bot` is comparing local Ollama models for real
 cli-bot --config ./cli-bot.toml --model lfm2:latest --benchmark --dry-run "Ping google five times"
 ```
 
+The current default model selection is documented in the published benchmark report:
+
+- [Models Benchmark Report](docs/models-benchmark-report.md)
+
+That report captures comparative results across multiple models and is the basis for choosing `lfm2:latest` as the default model.
+
 The benchmark report includes:
 
 - the model used
@@ -436,6 +463,7 @@ If `NO_COLOR` is set, color output is disabled.
 - `--dry-run`: show the selected command without executing it
 - `--print-plan`: print the structured planner response
 - `--benchmark`: print planning, execution, and total elapsed time in milliseconds
+- `--models-benchmark`: run configured model/query benchmarks and print a Markdown report
 - `--check`: verify config, Ollama connectivity, model availability, and editor resolution
 - `--color <auto|always|never>`: control ANSI color output
 - `--quiet`: hide cli-bot informational output and only show the selected command output
@@ -453,6 +481,7 @@ If `NO_COLOR` is set, color output is disabled.
 - [Configuration](docs/configuration.md)
 - [Usage](docs/usage.md)
 - [Testing](docs/testing.md)
+- [Roadmap](docs/roadmap.md)
 
 ## Developer Setup
 

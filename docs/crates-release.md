@@ -18,7 +18,7 @@ Edit `Cargo.toml`:
 
 ```toml
 [package]
-version = "0.1.2"
+version = "0.2.1"
 ```
 
 Use the next semver version you want to release.
@@ -70,7 +70,7 @@ cargo publish
 Or use the local release helper script after pushing the GitHub tag/release:
 
 ```bash
-scripts/release.sh v0.1.2
+scripts/release.sh v0.2.1
 ```
 
 The script:
@@ -131,7 +131,7 @@ See [Homebrew](homebrew.md) for the Homebrew side of the release.
 
 ## Typical Manual Release Session
 
-Example for version `0.1.2`:
+Example for version `0.2.1`:
 
 ```bash
 # edit Cargo.toml
@@ -146,7 +146,7 @@ curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
 Or with the helper script:
 
 ```bash
-scripts/release.sh v0.1.2
+scripts/release.sh v0.2.1
 ```
 
 ## Notes

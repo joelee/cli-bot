@@ -38,10 +38,10 @@ url "https://static.crates.io/crates/cli-bot/cli-bot-0.1.1.crate"
 sha256 "9a2f13aad6ad135793b0ae7b29e6ffba5efbf67dc97d813947da32907f0501af"
 ```
 
-For a new release like `0.1.2`, the `url` should become:
+For a new release like `0.2.1`, the `url` should become:
 
 ```ruby
-url "https://static.crates.io/crates/cli-bot/cli-bot-0.1.2.crate"
+url "https://static.crates.io/crates/cli-bot/cli-bot-0.2.1.crate"
 ```
 
 ## How To Get The New Checksum
@@ -55,7 +55,7 @@ curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
 Option 2: compute it directly from the crate download:
 
 ```bash
-curl -L https://static.crates.io/crates/cli-bot/cli-bot-0.1.2.crate | shasum -a 256
+curl -L https://static.crates.io/crates/cli-bot/cli-bot-0.2.1.crate | shasum -a 256
 ```
 
 Use the checksum from the published crates.io download, not the checksum of a local `target/package/*.crate` file.
@@ -76,7 +76,7 @@ Then commit and push the tap update:
 
 ```bash
 git add Formula/cli-bot.rb
-git commit -m "cli-bot 0.1.2"
+git commit -m "cli-bot 0.2.1"
 git push
 ```
 
@@ -86,7 +86,7 @@ If `HOMEBREW_FORMULA_FILE` points to the local formula file, `cli-bot` can updat
 
 ```bash
 export HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
-scripts/release.sh v0.1.2
+scripts/release.sh v0.2.1
 ```
 
 You can also place that variable in `.env` at the root of the `cli-bot` repository:

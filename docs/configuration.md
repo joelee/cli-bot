@@ -48,6 +48,11 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 - `shell_arg`: shell flag used to pass a command string
 - `preferred_editor`: preferred editor for edit-style requests; falls back to `$EDITOR` when unset
 
+### `[models_benchmark]`
+
+- `models`: list of Ollama model names to benchmark
+- `queries`: list of natural-language queries to run against each configured model
+
 ## Example
 
 ```toml
@@ -76,4 +81,12 @@ auto_select_recommended = false
 shell = "/bin/sh"
 shell_arg = "-c"
 preferred_editor = "nvim"
+
+[models_benchmark]
+models = ["lfm2:latest", "qwen3.5:latest", "gemma4:latest"]
+queries = [
+  "Ping google five times",
+  "Print the last git log message",
+  "What is my external IP address?"
+]
 ```

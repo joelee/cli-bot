@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::config::OllamaConfig;
 use crate::environment::ResolvedEnvironment;
@@ -29,13 +30,9 @@ impl OllamaClient {
         verbose: bool,
         output: &OutputStyler,
     ) -> Result<CommandPlan> {
-        let url = format!(
-            "{}/api/generate",
-            self.config.base_url.trim_end_matches('/')
-        );
         let request_body = GenerateRequest {
             model: &self.config.model,
-            prompt: build_prompt(
+            prompt: build_command_prompt(
                 request,
                 destructive_substrings,
                 preferred_editor,
@@ -48,12 +45,84 @@ impl OllamaClient {
             },
         };
 
+        let generated = self.generate_text(&request_body, verbose, output)?;
+        let json = extract_json_document(&generated).with_context(|| {
+            if verbose {
+                format!(
+                    "Ollama response did not contain a JSON object\nGenerated text:\n{generated}"
+                )
+            } else {
+                "Ollama response did not contain a JSON object".to_string()
+            }
+        })?;
+
+        if verbose {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!("[verbose] extracted planner json:\n{json}"))
+            );
+        }
+
+        let plan = serde_json::from_str::<CommandPlan>(json).with_context(|| {
+            if verbose {
+                format!(
+                    "failed to parse planner JSON returned by Ollama\nExtracted planner JSON:\n{json}\nFull generated text:\n{generated}"
+                )
+            } else {
+                "failed to parse planner JSON returned by Ollama".to_string()
+            }
+        })?;
+
+        validate_plan(&plan)?;
+
+        Ok(plan)
+    }
+
+    pub fn answer_unresolved(
+        &self,
+        request: &str,
+        preferred_editor: Option<&str>,
+        environment: &ResolvedEnvironment,
+        verbose: bool,
+        output: &OutputStyler,
+    ) -> Result<String> {
+        let request_body = GenerateRequest {
+            model: &self.config.model,
+            prompt: build_text_response_prompt(request, preferred_editor, environment),
+            system: &self.config.system_prompt,
+            stream: false,
+            options: GenerateOptions {
+                temperature: self.config.temperature,
+            },
+        };
+
+        let generated = self.generate_text(&request_body, verbose, output)?;
+        let answer = generated.trim();
+
+        if answer.is_empty() {
+            bail!("ollama returned an empty text response")
+        }
+
+        Ok(answer.to_string())
+    }
+
+    fn generate_text(
+        &self,
+        request_body: &GenerateRequest<'_>,
+        verbose: bool,
+        output: &OutputStyler,
+    ) -> Result<String> {
+        let url = format!(
+            "{}/api/generate",
+            self.config.base_url.trim_end_matches('/')
+        );
+
         if verbose {
             eprintln!(
                 "{}",
                 output.stderr_dim(&format!(
                     "[verbose] ollama generate url: {url}\n[verbose] ollama generate request:\n{}",
-                    serde_json::to_string_pretty(&request_body)
+                    serde_json::to_string_pretty(request_body)
                         .unwrap_or_else(|_| "<failed to serialize request>".to_string())
                 ))
             );
@@ -62,7 +131,7 @@ impl OllamaClient {
         let response = self
             .client
             .post(url)
-            .json(&request_body)
+            .json(request_body)
             .send()
             .context("failed to call Ollama")?
             .error_for_status()
@@ -95,43 +164,85 @@ impl OllamaClient {
             );
         }
 
-        let json = extract_json_document(&response.response).with_context(|| {
-            if verbose {
-                format!(
-                    "Ollama response did not contain a JSON object\nGenerated text:\n{}",
-                    response.response
-                )
-            } else {
-                "Ollama response did not contain a JSON object".to_string()
-            }
-        })?;
+        Ok(response.response)
+    }
+
+    pub fn check_service(&self, verbose: bool, output: &OutputStyler) -> Result<OllamaStatus> {
+        let response = self.fetch_tags(verbose, output)?;
+
+        Ok(OllamaStatus {
+            model_available: response
+                .models
+                .iter()
+                .any(|model| model.name == self.config.model),
+        })
+    }
+
+    pub fn benchmark_metadata(
+        &self,
+        verbose: bool,
+        output: &OutputStyler,
+    ) -> Result<OllamaBenchmarkMetadata> {
+        let version = self.fetch_version(verbose, output).ok();
+        let tags = self.fetch_tags(verbose, output)?;
+        let model_parameter_sizes = tags
+            .models
+            .into_iter()
+            .filter_map(|model| {
+                model
+                    .details
+                    .and_then(|details| details.parameter_size)
+                    .map(|parameter_size| (model.name, parameter_size))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Ok(OllamaBenchmarkMetadata {
+            version,
+            model_parameter_sizes,
+        })
+    }
+
+    fn fetch_version(&self, verbose: bool, output: &OutputStyler) -> Result<String> {
+        let url = format!("{}/api/version", self.config.base_url.trim_end_matches('/'));
 
         if verbose {
             eprintln!(
                 "{}",
-                output.stderr_dim(&format!("[verbose] extracted planner json:\n{json}"))
+                output.stderr_dim(&format!("[verbose] ollama version url: {url}"))
             );
         }
 
-        let plan = serde_json::from_str::<CommandPlan>(json).with_context(|| {
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .context("failed to reach Ollama version endpoint")?
+            .error_for_status()
+            .context("Ollama version endpoint returned an unsuccessful response")?
+            .text()
+            .context("failed to read Ollama version response body")?;
+
+        if verbose {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!(
+                    "[verbose] ollama version raw response:\n{response}"
+                ))
+            );
+        }
+
+        let response = serde_json::from_str::<VersionResponse>(&response).with_context(|| {
             if verbose {
-                format!(
-                    "failed to parse planner JSON returned by Ollama\nExtracted planner JSON:\n{json}\nFull generated text:\n{}",
-                    response.response
-                )
+                format!("failed to decode Ollama version response\nFull Ollama output:\n{response}")
             } else {
-                "failed to parse planner JSON returned by Ollama".to_string()
+                "failed to decode Ollama version response".to_string()
             }
         })?;
 
-        if plan.commands.is_empty() {
-            bail!("planner returned an empty command list")
-        }
-
-        Ok(plan)
+        Ok(response.version)
     }
 
-    pub fn check_service(&self, verbose: bool, output: &OutputStyler) -> Result<OllamaStatus> {
+    fn fetch_tags(&self, verbose: bool, output: &OutputStyler) -> Result<TagsResponse> {
         let url = format!("{}/api/tags", self.config.base_url.trim_end_matches('/'));
 
         if verbose {
@@ -158,25 +269,23 @@ impl OllamaClient {
             );
         }
 
-        let response = serde_json::from_str::<TagsResponse>(&response).with_context(|| {
+        serde_json::from_str::<TagsResponse>(&response).with_context(|| {
             if verbose {
                 format!("failed to decode Ollama tags response\nFull Ollama output:\n{response}")
             } else {
                 "failed to decode Ollama tags response".to_string()
             }
-        })?;
-
-        Ok(OllamaStatus {
-            model_available: response
-                .models
-                .iter()
-                .any(|model| model.name == self.config.model),
         })
     }
 }
 
 pub struct OllamaStatus {
     pub model_available: bool,
+}
+
+pub struct OllamaBenchmarkMetadata {
+    pub version: Option<String>,
+    pub model_parameter_sizes: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,9 +315,20 @@ struct TagsResponse {
 #[derive(Debug, Deserialize)]
 struct TaggedModel {
     name: String,
+    details: Option<TaggedModelDetails>,
 }
 
-fn build_prompt(
+#[derive(Debug, Deserialize)]
+struct TaggedModelDetails {
+    parameter_size: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionResponse {
+    version: String,
+}
+
+fn build_command_prompt(
     request: &str,
     destructive_substrings: &[String],
     preferred_editor: Option<&str>,
@@ -232,15 +352,22 @@ fn build_prompt(
 
     format!(
         concat!(
-            "Translate the user request into one or more shell commands. ",
+            "You are a shell-focused assistant. Translate the user request into one or more shell commands when the user is clearly asking for a terminal action. ",
             "Return JSON only with the schema ",
-            r#"{{"summary":"short summary","commands":[{{"command":"...","description":"...","potentially_destructive":false,"recommended":true,"rationale":"..."}}]}}"#,
-            ". If there are multiple plausible commands, include each one in the commands array. ",
+            r#"{{"summary":"short summary","unresolved":false,"commands":[{{"command":"...","description":"...","potentially_destructive":false,"recommended":true,"rationale":"..."}}]}}"#,
+            ". Set `unresolved` to true when you cannot confidently turn the request into a shell command without guessing. ",
+            "When `unresolved` is true, return an empty `commands` array. ",
+            "If there are multiple plausible shell commands, include each one in the commands array. ",
+            "Do not answer factual questions directly in this step. If the request is not clearly a shell command request or needs non-command output, set `unresolved` to true instead of guessing. ",
+            "If a request could reasonably refer to multiple targets or contexts, set `unresolved` to true instead of guessing. ",
+            "Examples of unresolved requests: `spell mantainence`, `open config`, `what does foo mean`. ",
+            "Examples of command requests: `What git branch am I in?` -> `git rev-parse --abbrev-ref HEAD`, `install btop` -> package manager command, `ping google five times` -> `ping -c 5 google.com`. ",
             "Set potentially_destructive to true when the command could delete, overwrite, stop, or reconfigure something important. ",
             "When there are multiple command choices, mark the single best choice with recommended=true and set recommended=false for the others. ",
             "When there is only one command, set recommended=true. ",
             "Operating system: {os}. Linux distribution: {distro}. Detected package manager: {detected_package_manager}. Effective package manager: {effective_package_manager}. ",
-            "For package-related requests such as listing installed packages, installing software, removing software, or searching package repositories, use commands appropriate for this environment and prefer the effective package manager. ",
+            "Only use package-manager commands when the user is clearly asking about packages, installing software, removing software, upgrading packages, searching repositories, or listing installed software. Do not guess with package-manager commands for unrelated requests. ",
+            "For explicitly package-related requests, use commands appropriate for this environment and prefer the effective package manager. ",
             "Use the package manager's canonical syntax and only pass the package name as the package argument. Examples: `brew install btop`, `paru -S btop`, `pacman -Q`, `apt list --installed`. ",
             "Preferred terminal editor: {preferred_editor}. If the user asks to edit a file, prefer commands that open that editor. ",
             "Known destructive patterns: {destructive_examples}. ",
@@ -256,6 +383,50 @@ fn build_prompt(
     )
 }
 
+fn build_text_response_prompt(
+    request: &str,
+    preferred_editor: Option<&str>,
+    environment: &ResolvedEnvironment,
+) -> String {
+    let preferred_editor = preferred_editor.unwrap_or("not specified");
+    let distro = environment
+        .distro
+        .map(|distro| distro.as_str())
+        .unwrap_or("not applicable");
+    let effective_package_manager = environment
+        .effective_package_manager
+        .map(|package_manager| package_manager.as_str())
+        .unwrap_or("unknown");
+
+    format!(
+        concat!(
+            "The user's request was not resolved as a shell command. Respond with plain text only, not JSON. ",
+            "If the request is a spelling, wording, or factual prompt, answer directly and concisely. ",
+            "If the request is ambiguous, ask one concise clarification question instead of guessing. ",
+            "Do not invent shell command results or system state. ",
+            "Operating system: {os}. Linux distribution: {distro}. Effective package manager: {effective_package_manager}. Preferred terminal editor: {preferred_editor}. ",
+            "User request: {request}"
+        ),
+        os = environment.os.as_str(),
+        distro = distro,
+        effective_package_manager = effective_package_manager,
+        preferred_editor = preferred_editor,
+        request = request,
+    )
+}
+
+fn validate_plan(plan: &CommandPlan) -> Result<()> {
+    if plan.unresolved {
+        return Ok(());
+    }
+
+    if plan.commands.is_empty() {
+        bail!("planner returned an empty command list")
+    }
+
+    Ok(())
+}
+
 fn extract_json_document(response: &str) -> Option<&str> {
     let start = response.find('{')?;
     let end = response.rfind('}')?;
@@ -265,10 +436,14 @@ fn extract_json_document(response: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenerateRequest, build_prompt, extract_json_document};
+    use super::{
+        GenerateRequest, build_command_prompt, build_text_response_prompt, extract_json_document,
+        validate_plan,
+    };
     use crate::environment::{
         OperatingSystem, PackageManager, PackageManagerSource, ResolvedEnvironment,
     };
+    use crate::planner::{CommandPlan, PlannedCommand};
 
     #[test]
     fn extracts_plain_json_document() {
@@ -291,49 +466,44 @@ mod tests {
     }
 
     #[test]
-    fn prompt_requires_potentially_destructive_boolean() {
-        let prompt = build_prompt(
+    fn prompt_requires_command_plan_schema() {
+        let prompt = build_command_prompt(
             "delete the target directory",
             &["rm -rf".into()],
             None,
             &sample_environment(),
         );
 
-        assert!(prompt.contains("\"potentially_destructive\":false"));
-        assert!(prompt.contains("\"recommended\":true"));
-        assert!(prompt.contains("Set potentially_destructive to true"));
-        assert!(prompt.contains("mark the single best choice with recommended=true"));
+        assert!(prompt.contains("\"unresolved\":false"));
+        assert!(prompt.contains("Examples of command requests"));
+        assert!(prompt.contains("What git branch am I in?"));
+        assert!(prompt.contains("set `unresolved` to true"));
     }
 
     #[test]
-    fn prompt_includes_preferred_editor() {
-        let prompt = build_prompt(
-            "edit my git config file",
-            &[],
-            Some("nvim"),
-            &sample_environment(),
-        );
-
-        assert!(prompt.contains("Preferred terminal editor: nvim"));
-        assert!(prompt.contains("prefer commands that open that editor"));
-    }
-
-    #[test]
-    fn prompt_includes_environment_context() {
-        let prompt = build_prompt("install btop", &[], None, &sample_environment());
+    fn command_prompt_includes_environment_context() {
+        let prompt = build_command_prompt("install btop", &[], None, &sample_environment());
 
         assert!(prompt.contains("Operating system: linux"));
         assert!(prompt.contains("Linux distribution: arch"));
         assert!(prompt.contains("Detected package manager: paru"));
         assert!(prompt.contains("Effective package manager: paru"));
-        assert!(prompt.contains("For package-related requests"));
+        assert!(prompt.contains("Only use package-manager commands"));
+    }
+
+    #[test]
+    fn text_response_prompt_mentions_plain_text() {
+        let prompt = build_text_response_prompt("spell mantainence", None, &sample_environment());
+
+        assert!(prompt.contains("Respond with plain text only"));
+        assert!(prompt.contains("spell mantainence"));
     }
 
     #[test]
     fn generate_request_serializes_prompt_for_verbose_logging() {
         let request = GenerateRequest {
             model: "lfm2:latest",
-            prompt: build_prompt("ping google", &[], Some("nvim"), &sample_environment()),
+            prompt: build_command_prompt("ping google", &[], Some("nvim"), &sample_environment()),
             system: "Return JSON only",
             stream: false,
             options: super::GenerateOptions { temperature: 0.0 },
@@ -343,6 +513,51 @@ mod tests {
 
         assert!(json.contains("lfm2:latest"));
         assert!(json.contains("ping google"));
+    }
+
+    #[test]
+    fn validates_command_plan() {
+        let plan = CommandPlan {
+            summary: None,
+            unresolved: false,
+            commands: vec![PlannedCommand {
+                command: "ping -c 5 google.com".into(),
+                description: "Ping five times".into(),
+                potentially_destructive: false,
+                recommended: true,
+                rationale: None,
+            }],
+        };
+
+        validate_plan(&plan).expect("command plan should validate");
+    }
+
+    #[test]
+    fn validates_unresolved_plan_without_commands() {
+        let plan = CommandPlan {
+            summary: Some("Need clarification".into()),
+            unresolved: true,
+            commands: vec![],
+        };
+
+        validate_plan(&plan).expect("unresolved plan should validate");
+    }
+
+    #[test]
+    fn rejects_resolved_plan_without_commands() {
+        let plan = CommandPlan {
+            summary: None,
+            unresolved: false,
+            commands: vec![],
+        };
+
+        let error = validate_plan(&plan).expect_err("plan should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("planner returned an empty command list")
+        );
     }
 
     fn sample_environment() -> ResolvedEnvironment {

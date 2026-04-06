@@ -12,6 +12,12 @@ Package-related requests use the resolved OS and package manager context.
 cargo run -- --config ./cli-bot.toml "Install btop"
 ```
 
+If the planner cannot safely resolve a request into a shell command, `cli-bot` can fall back to a plain text response:
+
+```bash
+cargo run -- --config ./cli-bot.toml "spell mantainence"
+```
+
 If you run `cli-bot` without a request string, it prompts you to type one interactively.
 
 ```bash
@@ -39,6 +45,8 @@ cargo run -- --config ./cli-bot.toml --quiet "Show disk usage for the current di
 
 The selected shell command still writes directly to the terminal.
 
+Plain text responses, such as spelling corrections, are still shown because they are the primary result.
+
 ## Print Structured Plan
 
 ```bash
@@ -57,6 +65,24 @@ This prints:
 - `planning_ms`: time spent waiting for Ollama to return a plan
 - `execution_ms`: time spent running the selected shell command, or `skipped` in `--dry-run`
 - `total_ms`: end-to-end elapsed time for the CLI invocation
+
+## Models Benchmark
+
+```bash
+cargo run -- --config ./cli-bot.toml --models-benchmark
+```
+
+This mode:
+
+- reads `[models_benchmark].models` and `[models_benchmark].queries` from `cli-bot.toml`
+- runs every query against every configured model
+- captures planner time and text-fallback time when unresolved
+- includes host system details at the top of the report, including GPU VRAM when it can be detected
+- prints a Markdown report with a query-vs-model summary table, per-model summary, ranking, and detailed responses
+
+Commands are never executed in this mode. It is for comparing model behavior and response quality.
+
+The current published benchmark report is available at [Models Benchmark Report](models-benchmark-report.md), and it documents why `lfm2:latest` is the default model.
 
 ## Color Output
 
@@ -98,6 +124,7 @@ cargo run -- --config ./cli-bot.toml --model lfm2.5-thinking:latest --verbose --
 `--verbose` prints:
 
 - resolved config path, model, and preferred editor
+- whether the planner marked the request as unresolved before the text fallback
 - the natural-language request
 - the full Ollama generate request body
 - the full raw Ollama HTTP response body
@@ -120,6 +147,7 @@ This verifies:
 - the resolved OS and distro
 - the detected and effective package manager
 - the preferred editor resolves from config or `$EDITOR` and is available
+- the terminal environment is suitable for interactive prompts and command selection
 
 ## Installed Binary
 
@@ -144,6 +172,7 @@ cli-bot "Edit my git config file"
 - If the planner returns one command, `cli-bot` selects it automatically.
 - If the planner returns multiple commands, `cli-bot` presents an interactive selector unless `--auto-select-best` or `ui.auto_select_recommended = true` is enabled.
 - If no request string is provided, `cli-bot` prompts for one interactively.
+- If the planner marks a request as unresolved, `cli-bot` makes a second LLM request for a plain text response instead of guessing a command.
 - Package-related requests use the resolved environment and effective package manager.
 - The LLM is required to return `potentially_destructive: true | false` for each command.
 - The LLM is also asked to mark the best command with `recommended: true`.

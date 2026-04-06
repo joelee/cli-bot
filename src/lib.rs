@@ -6,16 +6,17 @@ mod planner;
 mod shell;
 
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
-use std::{io, io::IsTerminal};
+use std::{env, io, io::IsTerminal};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use dialoguer::{Confirm, Input, Select};
 
-use crate::config::{AppConfig, is_known_editor, resolve_config_path};
+use crate::config::{AppConfig, ModelsBenchmarkConfig, is_known_editor, resolve_config_path};
 use crate::environment::{PackageManagerSource, resolve_environment};
-use crate::llm::OllamaClient;
+use crate::llm::{OllamaBenchmarkMetadata, OllamaClient};
 pub use crate::output::{ColorMode, OutputStyler};
 use crate::planner::{
     CommandPlan, PlannedCommand, command_requires_confirmation, recommended_command,
@@ -42,6 +43,10 @@ pub struct Cli {
     /// Verify config, Ollama connectivity, and editor availability.
     #[arg(short = 'C', long)]
     pub check: bool,
+
+    /// Benchmark configured models across configured queries and print a Markdown report.
+    #[arg(long)]
+    pub models_benchmark: bool,
 
     /// Automatically use the LLM-recommended command when multiple choices are returned.
     #[arg(short = 'a', long)]
@@ -148,6 +153,10 @@ pub fn run(cli: Cli) -> Result<()> {
         );
     }
 
+    if cli.models_benchmark {
+        return run_models_benchmark(config, resolved_environment, verbose, &output);
+    }
+
     let planner = OllamaClient::new(config.ollama.clone());
     let preferred_editor = config.execution.resolved_preferred_editor();
     if verbose {
@@ -172,6 +181,7 @@ pub fn run(cli: Cli) -> Result<()> {
             output.stderr_dim(&format!("[verbose] natural language request: {request}"))
         );
     }
+
     let planning_start = Instant::now();
     let plan = planner.plan_commands(
         &request,
@@ -181,7 +191,7 @@ pub fn run(cli: Cli) -> Result<()> {
         verbose,
         &output,
     )?;
-    let planning_elapsed = planning_start.elapsed();
+    let mut planning_elapsed = planning_start.elapsed();
 
     if cli.print_plan && show_output {
         let plan_json = serde_json::to_string_pretty(&plan)?;
@@ -193,6 +203,38 @@ pub fn run(cli: Cli) -> Result<()> {
             "{}",
             output.stderr_dim(&format!("[verbose] planner summary: {summary}"))
         );
+    }
+
+    if plan.unresolved {
+        if verbose {
+            eprintln!(
+                "{}",
+                output.stderr_dim("[verbose] planner marked request as unresolved; requesting text response fallback")
+            );
+        }
+        let response_start = Instant::now();
+        let text_response = planner.answer_unresolved(
+            &request,
+            preferred_editor.as_deref(),
+            &resolved_environment,
+            verbose,
+            &output,
+        )?;
+        planning_elapsed += response_start.elapsed();
+
+        println!("{text_response}");
+
+        if cli.benchmark && show_output {
+            print_benchmark_report(
+                &output,
+                &config.ollama.model,
+                planning_elapsed,
+                None,
+                total_start.elapsed(),
+            );
+        }
+
+        return Ok(());
     }
 
     let auto_select_best = config.ui.auto_select_recommended || cli.auto_select_best;
@@ -282,6 +324,7 @@ fn run_check(
     output: &OutputStyler,
 ) -> Result<()> {
     let mut failures = Vec::new();
+    let terminal = terminal_environment_status();
 
     if show_output {
         println!("{}", output.heading("Check results:"));
@@ -465,6 +508,20 @@ fn run_check(
         }
     }
 
+    if show_output {
+        let tone = if terminal.interactive_dialogs_supported() {
+            output.ok("ok")
+        } else {
+            output.warn("warn")
+        };
+        println!(
+            "{} {} ({})",
+            output.key("terminal:"),
+            tone,
+            terminal.describe()
+        );
+    }
+
     if failures.is_empty() {
         if show_output {
             println!("{} {}", output.key("check:"), output.ok("ok"));
@@ -473,6 +530,601 @@ fn run_check(
     } else {
         bail!("environment check failed")
     }
+}
+
+fn run_models_benchmark(
+    config: AppConfig,
+    resolved_environment: crate::environment::ResolvedEnvironment,
+    verbose: bool,
+    output: &OutputStyler,
+) -> Result<()> {
+    if config.models_benchmark.models.is_empty() {
+        bail!("models_benchmark.models is empty in cli-bot.toml")
+    }
+
+    if config.models_benchmark.queries.is_empty() {
+        bail!("models_benchmark.queries is empty in cli-bot.toml")
+    }
+
+    let preferred_editor = config.execution.resolved_preferred_editor();
+    let host_info = collect_benchmark_host_info();
+    let metadata_client = OllamaClient::new(config.ollama.clone());
+    let ollama_metadata = metadata_client.benchmark_metadata(verbose, output)?;
+    let mut results = Vec::new();
+
+    for model in &config.models_benchmark.models {
+        let mut ollama_config = config.ollama.clone();
+        ollama_config.model = model.clone();
+        let client = OllamaClient::new(ollama_config);
+
+        for query in &config.models_benchmark.queries {
+            let planner_start = Instant::now();
+            let result = client.plan_commands(
+                query,
+                &config.safety.destructive_substrings,
+                preferred_editor.as_deref(),
+                &resolved_environment,
+                verbose,
+                output,
+            );
+            let planner_elapsed = planner_start.elapsed();
+
+            let entry = match result {
+                Ok(plan) if plan.unresolved => {
+                    let fallback_start = Instant::now();
+                    let response = client.answer_unresolved(
+                        query,
+                        preferred_editor.as_deref(),
+                        &resolved_environment,
+                        verbose,
+                        output,
+                    );
+                    let fallback_elapsed = fallback_start.elapsed();
+
+                    match response {
+                        Ok(response) => ModelBenchmarkResult {
+                            model: model.clone(),
+                            query: query.clone(),
+                            planner_ms: duration_to_ms(planner_elapsed),
+                            fallback_ms: Some(duration_to_ms(fallback_elapsed)),
+                            total_ms: duration_to_ms(planner_elapsed + fallback_elapsed),
+                            unresolved: true,
+                            response_kind: "text_response".to_string(),
+                            response: response.trim().to_string(),
+                            error: None,
+                        },
+                        Err(error) => ModelBenchmarkResult {
+                            model: model.clone(),
+                            query: query.clone(),
+                            planner_ms: duration_to_ms(planner_elapsed),
+                            fallback_ms: Some(duration_to_ms(fallback_elapsed)),
+                            total_ms: duration_to_ms(planner_elapsed + fallback_elapsed),
+                            unresolved: true,
+                            response_kind: "error".to_string(),
+                            response: String::new(),
+                            error: Some(format!("{error:#}")),
+                        },
+                    }
+                }
+                Ok(plan) => ModelBenchmarkResult {
+                    model: model.clone(),
+                    query: query.clone(),
+                    planner_ms: duration_to_ms(planner_elapsed),
+                    fallback_ms: None,
+                    total_ms: duration_to_ms(planner_elapsed),
+                    unresolved: false,
+                    response_kind: "command_plan".to_string(),
+                    response: format_command_plan_response(&plan),
+                    error: None,
+                },
+                Err(error) => ModelBenchmarkResult {
+                    model: model.clone(),
+                    query: query.clone(),
+                    planner_ms: duration_to_ms(planner_elapsed),
+                    fallback_ms: None,
+                    total_ms: duration_to_ms(planner_elapsed),
+                    unresolved: false,
+                    response_kind: "error".to_string(),
+                    response: String::new(),
+                    error: Some(format!("{error:#}")),
+                },
+            };
+
+            results.push(entry);
+        }
+    }
+
+    print_models_benchmark_markdown(
+        &host_info,
+        &ollama_metadata,
+        &config.models_benchmark,
+        &results,
+    );
+    Ok(())
+}
+
+fn format_command_plan_response(plan: &CommandPlan) -> String {
+    let mut lines = Vec::new();
+
+    if let Some(summary) = plan.summary.as_deref() {
+        lines.push(format!("summary: {summary}"));
+    }
+
+    for command in &plan.commands {
+        let recommended = if command.recommended {
+            " [recommended]"
+        } else {
+            ""
+        };
+        lines.push(format!("{}{}", command.command, recommended));
+
+        if let Some(rationale) = command.rationale.as_deref() {
+            lines.push(format!("why: {rationale}"));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn print_models_benchmark_markdown(
+    host_info: &BenchmarkHostInfo,
+    ollama_metadata: &OllamaBenchmarkMetadata,
+    benchmark_config: &ModelsBenchmarkConfig,
+    results: &[ModelBenchmarkResult],
+) {
+    println!("# Model Benchmark Report\n");
+    println!("## Host\n");
+    println!("- Hostname: {}", host_info.hostname);
+    println!("- OS: {}", host_info.os);
+    println!("- Kernel: {}", host_info.kernel);
+    println!("- CPU: {}", host_info.cpu);
+    println!("- GPU: {}", host_info.gpu);
+    println!("- GPU VRAM: {}", host_info.gpu_vram);
+    println!("- Memory: {}", host_info.memory);
+    println!(
+        "- Ollama Version: {}\n",
+        ollama_metadata.version.as_deref().unwrap_or("unknown")
+    );
+
+    println!("## Models\n");
+    println!("| Model | Parameter Size |");
+    println!("| --- | --- |");
+    for model in &benchmark_config.models {
+        println!(
+            "| {} | {} |",
+            escape_markdown_cell(model),
+            ollama_metadata
+                .model_parameter_sizes
+                .get(model)
+                .map(String::as_str)
+                .unwrap_or("unknown")
+        );
+    }
+    println!();
+
+    print_models_benchmark_summary_table(benchmark_config, results);
+    print_models_benchmark_model_summary(ollama_metadata, benchmark_config, results);
+    print_models_benchmark_ranking(ollama_metadata, benchmark_config, results);
+
+    println!(
+        "| Model | Query | Planner ms | Fallback ms | Total ms | Kind | Unresolved | Status |"
+    );
+    println!("| --- | --- | ---: | ---: | ---: | --- | --- | --- |");
+
+    for result in results {
+        println!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} |",
+            escape_markdown_cell(&result.model),
+            escape_markdown_cell(&result.query),
+            result.planner_ms,
+            result
+                .fallback_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            result.total_ms,
+            result.response_kind,
+            if result.unresolved { "yes" } else { "no" },
+            if result.error.is_some() {
+                "error"
+            } else {
+                "ok"
+            },
+        );
+    }
+
+    println!();
+
+    for result in results {
+        println!("## {} - {}\n", result.model, result.query);
+        println!("- Planner ms: {}", result.planner_ms);
+        match result.fallback_ms {
+            Some(fallback_ms) => println!("- Fallback ms: {fallback_ms}"),
+            None => println!("- Fallback ms: not used"),
+        }
+        println!("- Total ms: {}", result.total_ms);
+        println!("- Kind: {}", result.response_kind);
+        println!(
+            "- Unresolved: {}",
+            if result.unresolved { "yes" } else { "no" }
+        );
+
+        if let Some(error) = result.error.as_deref() {
+            println!("- Status: error\n");
+            println!("```text\n{}\n```\n", error.trim());
+        } else {
+            println!("- Status: ok\n");
+            println!("```text\n{}\n```\n", result.response.trim());
+        }
+    }
+}
+
+fn print_models_benchmark_summary_table(
+    benchmark_config: &ModelsBenchmarkConfig,
+    results: &[ModelBenchmarkResult],
+) {
+    println!("## Summary Table\n");
+    let mut header = String::from("| Query |");
+    let mut separator = String::from("| --- |");
+
+    for model in &benchmark_config.models {
+        header.push_str(&format!(" {} |", escape_markdown_cell(model)));
+        separator.push_str(" ---: |");
+    }
+
+    println!("{header}");
+    println!("{separator}");
+
+    for query in &benchmark_config.queries {
+        let mut row = format!("| {} |", escape_markdown_cell(query));
+
+        for model in &benchmark_config.models {
+            let cell = results
+                .iter()
+                .find(|result| result.query == *query && result.model == *model)
+                .map(|result| {
+                    if result.error.is_some() {
+                        "failed".to_string()
+                    } else {
+                        result.total_ms.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "failed".to_string());
+
+            row.push_str(&format!(" {} |", cell));
+        }
+
+        println!("{row}");
+    }
+
+    println!();
+}
+
+fn print_models_benchmark_model_summary(
+    ollama_metadata: &OllamaBenchmarkMetadata,
+    benchmark_config: &ModelsBenchmarkConfig,
+    results: &[ModelBenchmarkResult],
+) {
+    println!("## Model Summary\n");
+    println!(
+        "| Model | Parameter Size | Success Rate | Avg Total ms (ok) | Successful Queries | Failed Queries |"
+    );
+    println!("| --- | --- | ---: | ---: | ---: | ---: |");
+
+    for model in &benchmark_config.models {
+        let stats = compute_model_benchmark_stats(model, results);
+        println!(
+            "| {} | {} | {} | {} | {} | {} |",
+            escape_markdown_cell(model),
+            ollama_metadata
+                .model_parameter_sizes
+                .get(model)
+                .map(String::as_str)
+                .unwrap_or("unknown"),
+            format_success_rate(stats.success_count, stats.total_count),
+            stats
+                .avg_total_ms_ok
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "failed".to_string()),
+            stats.success_count,
+            stats.failure_count,
+        );
+    }
+
+    println!();
+}
+
+fn print_models_benchmark_ranking(
+    ollama_metadata: &OllamaBenchmarkMetadata,
+    benchmark_config: &ModelsBenchmarkConfig,
+    results: &[ModelBenchmarkResult],
+) {
+    println!("## Ranking\n");
+    println!(
+        "Ranked by success rate first, then by average total milliseconds across successful queries.\n"
+    );
+    println!("| Rank | Model | Parameter Size | Success Rate | Avg Total ms (ok) |");
+    println!("| ---: | --- | --- | ---: | ---: |");
+
+    let mut ranked = benchmark_config
+        .models
+        .iter()
+        .map(|model| (model.clone(), compute_model_benchmark_stats(model, results)))
+        .collect::<Vec<_>>();
+
+    ranked.sort_by(|(left_model, left_stats), (right_model, right_stats)| {
+        right_stats
+            .success_count
+            .cmp(&left_stats.success_count)
+            .then_with(|| left_stats.failure_count.cmp(&right_stats.failure_count))
+            .then_with(
+                || match (left_stats.avg_total_ms_ok, right_stats.avg_total_ms_ok) {
+                    (Some(left), Some(right)) => left.cmp(&right),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                },
+            )
+            .then_with(|| left_model.cmp(right_model))
+    });
+
+    for (index, (model, stats)) in ranked.iter().enumerate() {
+        println!(
+            "| {} | {} | {} | {} | {} |",
+            index + 1,
+            escape_markdown_cell(model),
+            ollama_metadata
+                .model_parameter_sizes
+                .get(model)
+                .map(String::as_str)
+                .unwrap_or("unknown"),
+            format_success_rate(stats.success_count, stats.total_count),
+            stats
+                .avg_total_ms_ok
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "failed".to_string()),
+        );
+    }
+
+    println!();
+}
+
+fn format_success_rate(success_count: usize, total_count: usize) -> String {
+    if total_count == 0 {
+        return "0.0%".to_string();
+    }
+
+    format!(
+        "{:.1}%",
+        (success_count as f64 / total_count as f64) * 100.0
+    )
+}
+
+fn compute_model_benchmark_stats(
+    model: &str,
+    results: &[ModelBenchmarkResult],
+) -> ModelBenchmarkStats {
+    let model_results = results
+        .iter()
+        .filter(|result| result.model == model)
+        .collect::<Vec<_>>();
+    let total_count = model_results.len();
+    let success_count = model_results
+        .iter()
+        .filter(|result| result.error.is_none())
+        .count();
+    let failure_count = total_count.saturating_sub(success_count);
+    let successful_total_ms = model_results
+        .iter()
+        .filter(|result| result.error.is_none())
+        .map(|result| result.total_ms)
+        .collect::<Vec<_>>();
+    let avg_total_ms_ok = if successful_total_ms.is_empty() {
+        None
+    } else {
+        Some(successful_total_ms.iter().sum::<u128>() / successful_total_ms.len() as u128)
+    };
+
+    ModelBenchmarkStats {
+        total_count,
+        success_count,
+        failure_count,
+        avg_total_ms_ok,
+    }
+}
+
+fn escape_markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
+}
+
+struct ModelBenchmarkResult {
+    model: String,
+    query: String,
+    planner_ms: u128,
+    fallback_ms: Option<u128>,
+    total_ms: u128,
+    unresolved: bool,
+    response_kind: String,
+    response: String,
+    error: Option<String>,
+}
+
+struct ModelBenchmarkStats {
+    total_count: usize,
+    success_count: usize,
+    failure_count: usize,
+    avg_total_ms_ok: Option<u128>,
+}
+
+struct BenchmarkHostInfo {
+    hostname: String,
+    os: String,
+    kernel: String,
+    cpu: String,
+    gpu: String,
+    gpu_vram: String,
+    memory: String,
+}
+
+fn collect_benchmark_host_info() -> BenchmarkHostInfo {
+    let hostname = detect_hostname();
+    let os = detect_host_os();
+    let kernel = command_output("uname", &["-r"]).unwrap_or_else(|| "unknown".to_string());
+    let cpu = detect_cpu_model().unwrap_or_else(|| "unknown".to_string());
+    let gpu = detect_gpu_model().unwrap_or_else(|| "unknown".to_string());
+    let gpu_vram = detect_gpu_vram().unwrap_or_else(|| "unknown".to_string());
+    let memory = detect_memory_total().unwrap_or_else(|| "unknown".to_string());
+
+    BenchmarkHostInfo {
+        hostname,
+        os,
+        kernel,
+        cpu,
+        gpu,
+        gpu_vram,
+        memory,
+    }
+}
+
+fn detect_hostname() -> String {
+    command_output("hostname", &[]).unwrap_or_else(|| "unknown".to_string())
+}
+
+fn detect_host_os() -> String {
+    match env::consts::OS {
+        "linux" => read_linux_pretty_name().unwrap_or_else(|| "Linux".to_string()),
+        "macos" => command_output("sw_vers", &["-productVersion"])
+            .map(|version| format!("macOS {version}"))
+            .unwrap_or_else(|| "macOS".to_string()),
+        other => other.to_string(),
+    }
+}
+
+fn read_linux_pretty_name() -> Option<String> {
+    let content = std::fs::read_to_string("/etc/os-release").ok()?;
+
+    content.lines().find_map(|line| {
+        line.strip_prefix("PRETTY_NAME=")
+            .map(|value| value.trim_matches('"').to_string())
+    })
+}
+
+fn detect_cpu_model() -> Option<String> {
+    match env::consts::OS {
+        "linux" => {
+            let content = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+            content.lines().find_map(|line| {
+                line.split_once(':').and_then(|(key, value)| {
+                    (key.trim() == "model name").then(|| value.trim().to_string())
+                })
+            })
+        }
+        "macos" => command_output("sysctl", &["-n", "machdep.cpu.brand_string"]),
+        _ => None,
+    }
+}
+
+fn detect_gpu_model() -> Option<String> {
+    match env::consts::OS {
+        "linux" => command_output(
+            "sh",
+            &["-c", "lspci | grep -Ei 'vga|3d|display' | head -n 1"],
+        )
+        .and_then(|line| {
+            line.split_once(':')
+                .map(|(_, value)| value.trim().to_string())
+                .or(Some(line))
+        }),
+        "macos" => command_output(
+            "sh",
+            &[
+                "-c",
+                "system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model' | head -n 1 | sed 's/.*: //'",
+            ],
+        ),
+        _ => None,
+    }
+}
+
+fn detect_memory_total() -> Option<String> {
+    match env::consts::OS {
+        "linux" => {
+            let content = std::fs::read_to_string("/proc/meminfo").ok()?;
+            let mem_total_kib = content.lines().find_map(parse_mem_total_kib)?;
+            Some(format_bytes_from_kib(mem_total_kib))
+        }
+        "macos" => command_output("sysctl", &["-n", "hw.memsize"])
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(format_bytes),
+        _ => None,
+    }
+}
+
+fn detect_gpu_vram() -> Option<String> {
+    match env::consts::OS {
+        "linux" => detect_linux_gpu_vram(),
+        "macos" => command_output(
+            "sh",
+            &[
+                "-c",
+                "system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'VRAM|Video Memory' | head -n 1 | sed 's/.*: //'",
+            ],
+        ),
+        _ => None,
+    }
+}
+
+fn detect_linux_gpu_vram() -> Option<String> {
+    if let Some(value) = command_output(
+        "nvidia-smi",
+        &["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+    ) {
+        let first_value = value.lines().next()?.trim().parse::<u64>().ok()?;
+        return Some(format_bytes_from_mib(first_value));
+    }
+
+    let paths = std::fs::read_dir("/sys/class/drm").ok()?;
+    for entry in paths.flatten() {
+        let vram_path = entry.path().join("device/mem_info_vram_total");
+        if let Ok(content) = std::fs::read_to_string(vram_path)
+            && let Ok(bytes) = content.trim().parse::<u64>()
+        {
+            return Some(format_bytes(bytes));
+        }
+    }
+
+    None
+}
+
+fn parse_mem_total_kib(line: &str) -> Option<u64> {
+    let (key, value) = line.split_once(':')?;
+    if key.trim() != "MemTotal" {
+        return None;
+    }
+
+    value.split_whitespace().next()?.parse::<u64>().ok()
+}
+
+fn format_bytes_from_kib(kib: u64) -> String {
+    format_bytes(kib.saturating_mul(1024))
+}
+
+fn format_bytes_from_mib(mib: u64) -> String {
+    format_bytes(mib.saturating_mul(1024 * 1024))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    let gib = bytes as f64 / 1024_f64.powi(3);
+    format!("{gib:.1} GiB")
+}
+
+fn command_output(command: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(command).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 fn apply_model_override(config: &mut AppConfig, model_override: Option<&str>) -> Result<()> {
@@ -536,8 +1188,20 @@ fn select_command<'a>(
         return Ok(&plan.commands[0]);
     }
 
-    if auto_select_best && let Some(command) = recommended_command(plan) {
-        return Ok(command);
+    if auto_select_best {
+        if let Some(command) = recommended_command(plan) {
+            return Ok(command);
+        }
+
+        return Ok(&plan.commands[0]);
+    }
+
+    let terminal = terminal_environment_status();
+    if !terminal.interactive_dialogs_supported() {
+        bail!(
+            "interactive selection requires TTY stdin/stdout and a usable TERM; current terminal status: {}. Use --auto-select-best or run cli-bot in an interactive terminal",
+            terminal.describe()
+        )
     }
 
     let items = plan
@@ -586,13 +1250,57 @@ fn duration_to_ms(duration: Duration) -> u128 {
     duration.as_millis()
 }
 
+fn terminal_environment_status() -> TerminalEnvironmentStatus {
+    TerminalEnvironmentStatus {
+        stdin_tty: io::stdin().is_terminal(),
+        stdout_tty: io::stdout().is_terminal(),
+        stderr_tty: io::stderr().is_terminal(),
+        term: env::var("TERM").ok().filter(|term| !term.trim().is_empty()),
+    }
+}
+
+struct TerminalEnvironmentStatus {
+    stdin_tty: bool,
+    stdout_tty: bool,
+    stderr_tty: bool,
+    term: Option<String>,
+}
+
+impl TerminalEnvironmentStatus {
+    fn interactive_dialogs_supported(&self) -> bool {
+        self.stdin_tty
+            && self.stdout_tty
+            && self.stderr_tty
+            && self
+                .term
+                .as_deref()
+                .is_some_and(|term| !term.is_empty() && term != "dumb")
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "stdin_tty={}, stdout_tty={}, stderr_tty={}, TERM={}",
+            self.stdin_tty,
+            self.stdout_tty,
+            self.stderr_tty,
+            self.term.as_deref().unwrap_or("unset")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{apply_model_override, duration_to_ms, normalize_request, select_command};
+    use super::{
+        ModelBenchmarkResult, TerminalEnvironmentStatus, apply_model_override,
+        compute_model_benchmark_stats, duration_to_ms, format_bytes_from_kib,
+        format_bytes_from_mib, format_success_rate, normalize_request, parse_mem_total_kib,
+        select_command,
+    };
     use crate::config::{
-        AppConfig, EnvironmentConfig, ExecutionConfig, OllamaConfig, SafetyConfig, UiConfig,
+        AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
+        SafetyConfig, UiConfig,
     };
     use crate::planner::{CommandPlan, PlannedCommand};
 
@@ -634,6 +1342,7 @@ mod tests {
     fn auto_selects_recommended_command_when_enabled() {
         let plan = CommandPlan {
             summary: None,
+            unresolved: false,
             commands: vec![
                 PlannedCommand {
                     command: "ping google.com".into(),
@@ -658,6 +1367,34 @@ mod tests {
     }
 
     #[test]
+    fn auto_selects_first_command_when_recommendation_missing() {
+        let plan = CommandPlan {
+            summary: None,
+            unresolved: false,
+            commands: vec![
+                PlannedCommand {
+                    command: "git log -1 --pretty=%B".into(),
+                    description: "git log -1 --pretty=%B".into(),
+                    potentially_destructive: false,
+                    recommended: false,
+                    rationale: None,
+                },
+                PlannedCommand {
+                    command: "git rev-parse --short HEAD".into(),
+                    description: "git rev-parse --short HEAD".into(),
+                    potentially_destructive: false,
+                    recommended: false,
+                    rationale: None,
+                },
+            ],
+        };
+
+        let selected = select_command(&plan, "Choose", true).expect("selection should succeed");
+
+        assert_eq!(selected.command, "git log -1 --pretty=%B");
+    }
+
+    #[test]
     fn normalizes_request_by_trimming_whitespace() {
         let request = normalize_request("  Ping google five times  ".into())
             .expect("request should normalize");
@@ -670,6 +1407,31 @@ mod tests {
         let error = normalize_request("   ".into()).expect_err("blank request should fail");
 
         assert!(error.to_string().contains("request must not be empty"));
+    }
+
+    #[test]
+    fn terminal_status_accepts_interactive_terminal() {
+        let status = TerminalEnvironmentStatus {
+            stdin_tty: true,
+            stdout_tty: true,
+            stderr_tty: true,
+            term: Some("xterm-ghostty".into()),
+        };
+
+        assert!(status.interactive_dialogs_supported());
+        assert!(status.describe().contains("TERM=xterm-ghostty"));
+    }
+
+    #[test]
+    fn terminal_status_rejects_non_interactive_terminal() {
+        let status = TerminalEnvironmentStatus {
+            stdin_tty: false,
+            stdout_tty: false,
+            stderr_tty: false,
+            term: Some("xterm-ghostty".into()),
+        };
+
+        assert!(!status.interactive_dialogs_supported());
     }
 
     fn sample_config() -> AppConfig {
@@ -696,6 +1458,70 @@ mod tests {
                 shell_arg: "-c".into(),
                 preferred_editor: Some("nvim".into()),
             },
+            models_benchmark: ModelsBenchmarkConfig::default(),
         }
+    }
+
+    #[test]
+    fn parses_mem_total_from_proc_meminfo_line() {
+        assert_eq!(
+            parse_mem_total_kib("MemTotal:       32768000 kB"),
+            Some(32_768_000)
+        );
+        assert_eq!(format_bytes_from_kib(1_048_576), "1.0 GiB");
+        assert_eq!(format_bytes_from_mib(16_384), "16.0 GiB");
+    }
+
+    #[test]
+    fn formats_success_rate_percentage() {
+        assert_eq!(format_success_rate(7, 7), "100.0%");
+        assert_eq!(format_success_rate(5, 7), "71.4%");
+        assert_eq!(format_success_rate(0, 0), "0.0%");
+    }
+
+    #[test]
+    fn computes_model_benchmark_stats() {
+        let results = vec![
+            ModelBenchmarkResult {
+                model: "lfm2:latest".into(),
+                query: "Ping google five times".into(),
+                planner_ms: 10,
+                fallback_ms: None,
+                total_ms: 10,
+                unresolved: false,
+                response_kind: "command_plan".into(),
+                response: "ping -c 5 google.com".into(),
+                error: None,
+            },
+            ModelBenchmarkResult {
+                model: "lfm2:latest".into(),
+                query: "What is the purpose of life?".into(),
+                planner_ms: 10,
+                fallback_ms: Some(5),
+                total_ms: 15,
+                unresolved: true,
+                response_kind: "text_response".into(),
+                response: "42".into(),
+                error: None,
+            },
+            ModelBenchmarkResult {
+                model: "lfm2:latest".into(),
+                query: "broken".into(),
+                planner_ms: 30,
+                fallback_ms: None,
+                total_ms: 30,
+                unresolved: false,
+                response_kind: "error".into(),
+                response: String::new(),
+                error: Some("boom".into()),
+            },
+        ];
+
+        let stats = compute_model_benchmark_stats("lfm2:latest", &results);
+
+        assert_eq!(stats.total_count, 3);
+        assert_eq!(stats.success_count, 2);
+        assert_eq!(stats.failure_count, 1);
+        assert_eq!(stats.avg_total_ms_ok, Some(12));
     }
 }
