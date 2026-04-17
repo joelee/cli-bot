@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 use std::{env, io, io::IsTerminal};
+use std::{fmt::Write as _, fs};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -30,7 +31,7 @@ use crate::planner::{
 )]
 pub struct Cli {
     /// Natural-language request to translate into a shell command.
-    pub request: Option<String>,
+    pub request: Vec<String>,
 
     /// Path to the cli-bot TOML configuration file.
     #[arg(short, long)]
@@ -44,9 +45,9 @@ pub struct Cli {
     #[arg(short = 'C', long)]
     pub check: bool,
 
-    /// Benchmark configured models across configured queries and print a Markdown report.
-    #[arg(long)]
-    pub models_benchmark: bool,
+    /// Benchmark configured models across configured queries and print Markdown to stdout or an optional file.
+    #[arg(long, value_name = "FILE", num_args = 0..=1, default_missing_value = "-")]
+    pub models_benchmark: Option<PathBuf>,
 
     /// Automatically use the LLM-recommended command when multiple choices are returned.
     #[arg(short = 'a', long)]
@@ -153,8 +154,22 @@ pub fn run(cli: Cli) -> Result<()> {
         );
     }
 
-    if cli.models_benchmark {
-        return run_models_benchmark(config, resolved_environment, verbose, &output);
+    if let Some(benchmark_output) = cli.models_benchmark.clone() {
+        let benchmark_output = if benchmark_output_is_stdout(&benchmark_output) {
+            resolve_request(&cli.request)?
+                .map(PathBuf::from)
+                .unwrap_or(benchmark_output)
+        } else {
+            benchmark_output
+        };
+
+        return run_models_benchmark(
+            config,
+            resolved_environment,
+            verbose,
+            &output,
+            benchmark_output,
+        );
     }
 
     let planner = OllamaClient::new(config.ollama.clone());
@@ -168,13 +183,11 @@ pub fn run(cli: Cli) -> Result<()> {
             ))
         );
     }
-    let request = cli
-        .request
-        .as_deref()
-        .map(str::to_owned)
-        .map(normalize_request)
-        .transpose()?
-        .map_or_else(prompt_for_request, Ok)?;
+    let request = if cli.request.is_empty() {
+        prompt_for_request()?
+    } else {
+        resolve_request(&cli.request)?.expect("request parts should resolve when non-empty")
+    };
     if verbose {
         eprintln!(
             "{}",
@@ -537,6 +550,7 @@ fn run_models_benchmark(
     resolved_environment: crate::environment::ResolvedEnvironment,
     verbose: bool,
     output: &OutputStyler,
+    output_path: PathBuf,
 ) -> Result<()> {
     if config.models_benchmark.models.is_empty() {
         bail!("models_benchmark.models is empty in cli-bot.toml")
@@ -634,12 +648,24 @@ fn run_models_benchmark(
         }
     }
 
-    print_models_benchmark_markdown(
+    let report = render_models_benchmark_markdown(
         &host_info,
         &ollama_metadata,
         &config.models_benchmark,
         &results,
     );
+
+    if benchmark_output_is_stdout(&output_path) {
+        print!("{report}");
+    } else {
+        fs::write(&output_path, report).with_context(|| {
+            format!(
+                "failed to write models benchmark report to `{}`",
+                output_path.display()
+            )
+        })?;
+    }
+
     Ok(())
 }
 
@@ -666,31 +692,35 @@ fn format_command_plan_response(plan: &CommandPlan) -> String {
     lines.join("\n")
 }
 
-fn print_models_benchmark_markdown(
+fn render_models_benchmark_markdown(
     host_info: &BenchmarkHostInfo,
     ollama_metadata: &OllamaBenchmarkMetadata,
     benchmark_config: &ModelsBenchmarkConfig,
     results: &[ModelBenchmarkResult],
-) {
-    println!("# Model Benchmark Report\n");
-    println!("## Host\n");
-    println!("- Hostname: {}", host_info.hostname);
-    println!("- OS: {}", host_info.os);
-    println!("- Kernel: {}", host_info.kernel);
-    println!("- CPU: {}", host_info.cpu);
-    println!("- GPU: {}", host_info.gpu);
-    println!("- GPU VRAM: {}", host_info.gpu_vram);
-    println!("- Memory: {}", host_info.memory);
-    println!(
+) -> String {
+    let mut report = String::new();
+    writeln!(report, "# Model Benchmark Report\n").ok();
+    writeln!(report, "## Host\n").ok();
+    writeln!(report, "- Hostname: {}", host_info.hostname).ok();
+    writeln!(report, "- OS: {}", host_info.os).ok();
+    writeln!(report, "- Kernel: {}", host_info.kernel).ok();
+    writeln!(report, "- CPU: {}", host_info.cpu).ok();
+    writeln!(report, "- GPU: {}", host_info.gpu).ok();
+    writeln!(report, "- GPU VRAM: {}", host_info.gpu_vram).ok();
+    writeln!(report, "- Memory: {}", host_info.memory).ok();
+    writeln!(
+        report,
         "- Ollama Version: {}\n",
         ollama_metadata.version.as_deref().unwrap_or("unknown")
-    );
+    )
+    .ok();
 
-    println!("## Models\n");
-    println!("| Model | Parameter Size |");
-    println!("| --- | --- |");
+    writeln!(report, "## Models\n").ok();
+    writeln!(report, "| Model | Parameter Size |").ok();
+    writeln!(report, "| --- | --- |").ok();
     for model in &benchmark_config.models {
-        println!(
+        writeln!(
+            report,
             "| {} | {} |",
             escape_markdown_cell(model),
             ollama_metadata
@@ -698,71 +728,94 @@ fn print_models_benchmark_markdown(
                 .get(model)
                 .map(String::as_str)
                 .unwrap_or("unknown")
-        );
+        )
+        .ok();
     }
-    println!();
+    writeln!(report).ok();
 
-    print_models_benchmark_summary_table(benchmark_config, results);
-    print_models_benchmark_model_summary(ollama_metadata, benchmark_config, results);
-    print_models_benchmark_ranking(ollama_metadata, benchmark_config, results);
+    render_models_benchmark_summary_table(&mut report, benchmark_config, results);
+    render_models_benchmark_model_summary(&mut report, ollama_metadata, benchmark_config, results);
+    render_models_benchmark_ranking(&mut report, ollama_metadata, benchmark_config, results);
 
-    println!(
+    writeln!(report, "## Detailed Results\n").ok();
+    writeln!(
+        report,
         "| Model | Query | Planner ms | Fallback ms | Total ms | Kind | Unresolved | Status |"
-    );
-    println!("| --- | --- | ---: | ---: | ---: | --- | --- | --- |");
+    )
+    .ok();
+    writeln!(
+        report,
+        "| --- | --- | ---: | ---: | ---: | --- | --- | --- |"
+    )
+    .ok();
 
-    for result in results {
-        println!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |",
-            escape_markdown_cell(&result.model),
-            escape_markdown_cell(&result.query),
-            result.planner_ms,
-            result
-                .fallback_ms
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            result.total_ms,
-            result.response_kind,
-            if result.unresolved { "yes" } else { "no" },
-            if result.error.is_some() {
-                "error"
+    for query in &benchmark_config.queries {
+        for result in results.iter().filter(|result| result.query == *query) {
+            writeln!(
+                report,
+                "| {} | {} | {} | {} | {} | {} | {} | {} |",
+                escape_markdown_cell(&result.model),
+                escape_markdown_cell(&result.query),
+                result.planner_ms,
+                result
+                    .fallback_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                result.total_ms,
+                result.response_kind,
+                if result.unresolved { "yes" } else { "no" },
+                if result.error.is_some() {
+                    "error"
+                } else {
+                    "ok"
+                },
+            )
+            .ok();
+        }
+    }
+
+    writeln!(report).ok();
+
+    for query in &benchmark_config.queries {
+        writeln!(report, "### {}\n", query).ok();
+
+        for result in results.iter().filter(|result| result.query == *query) {
+            writeln!(report, "#### {}\n", result.model).ok();
+            writeln!(report, "- Planner ms: {}", result.planner_ms).ok();
+            match result.fallback_ms {
+                Some(fallback_ms) => writeln!(report, "- Fallback ms: {fallback_ms}").ok(),
+                None => writeln!(report, "- Fallback ms: not used").ok(),
+            };
+            writeln!(report, "- Total ms: {}", result.total_ms).ok();
+            writeln!(report, "- Kind: {}", result.response_kind).ok();
+            writeln!(
+                report,
+                "- Unresolved: {}",
+                if result.unresolved { "yes" } else { "no" }
+            )
+            .ok();
+
+            if let Some(error) = result.error.as_deref() {
+                writeln!(report, "- Status: error\n").ok();
+                writeln!(report, "```text\n{}\n```\n", error.trim()).ok();
             } else {
-                "ok"
-            },
-        );
+                writeln!(report, "- Status: ok\n").ok();
+                writeln!(report, "```text\n{}\n```\n", result.response.trim()).ok();
+            }
+        }
+
+        writeln!(report).ok();
     }
 
-    println!();
-
-    for result in results {
-        println!("## {} - {}\n", result.model, result.query);
-        println!("- Planner ms: {}", result.planner_ms);
-        match result.fallback_ms {
-            Some(fallback_ms) => println!("- Fallback ms: {fallback_ms}"),
-            None => println!("- Fallback ms: not used"),
-        }
-        println!("- Total ms: {}", result.total_ms);
-        println!("- Kind: {}", result.response_kind);
-        println!(
-            "- Unresolved: {}",
-            if result.unresolved { "yes" } else { "no" }
-        );
-
-        if let Some(error) = result.error.as_deref() {
-            println!("- Status: error\n");
-            println!("```text\n{}\n```\n", error.trim());
-        } else {
-            println!("- Status: ok\n");
-            println!("```text\n{}\n```\n", result.response.trim());
-        }
-    }
+    report
 }
 
-fn print_models_benchmark_summary_table(
+fn render_models_benchmark_summary_table(
+    report: &mut String,
     benchmark_config: &ModelsBenchmarkConfig,
     results: &[ModelBenchmarkResult],
 ) {
-    println!("## Summary Table\n");
+    writeln!(report, "## Summary Table\n").ok();
     let mut header = String::from("| Query |");
     let mut separator = String::from("| --- |");
 
@@ -771,8 +824,8 @@ fn print_models_benchmark_summary_table(
         separator.push_str(" ---: |");
     }
 
-    println!("{header}");
-    println!("{separator}");
+    writeln!(report, "{header}").ok();
+    writeln!(report, "{separator}").ok();
 
     for query in &benchmark_config.queries {
         let mut row = format!("| {} |", escape_markdown_cell(query));
@@ -793,26 +846,30 @@ fn print_models_benchmark_summary_table(
             row.push_str(&format!(" {} |", cell));
         }
 
-        println!("{row}");
+        writeln!(report, "{row}").ok();
     }
 
-    println!();
+    writeln!(report).ok();
 }
 
-fn print_models_benchmark_model_summary(
+fn render_models_benchmark_model_summary(
+    report: &mut String,
     ollama_metadata: &OllamaBenchmarkMetadata,
     benchmark_config: &ModelsBenchmarkConfig,
     results: &[ModelBenchmarkResult],
 ) {
-    println!("## Model Summary\n");
-    println!(
+    writeln!(report, "## Model Summary\n").ok();
+    writeln!(
+        report,
         "| Model | Parameter Size | Success Rate | Avg Total ms (ok) | Successful Queries | Failed Queries |"
-    );
-    println!("| --- | --- | ---: | ---: | ---: | ---: |");
+    )
+    .ok();
+    writeln!(report, "| --- | --- | ---: | ---: | ---: | ---: |").ok();
 
     for model in &benchmark_config.models {
         let stats = compute_model_benchmark_stats(model, results);
-        println!(
+        writeln!(
+            report,
             "| {} | {} | {} | {} | {} | {} |",
             escape_markdown_cell(model),
             ollama_metadata
@@ -827,23 +884,31 @@ fn print_models_benchmark_model_summary(
                 .unwrap_or_else(|| "failed".to_string()),
             stats.success_count,
             stats.failure_count,
-        );
+        )
+        .ok();
     }
 
-    println!();
+    writeln!(report).ok();
 }
 
-fn print_models_benchmark_ranking(
+fn render_models_benchmark_ranking(
+    report: &mut String,
     ollama_metadata: &OllamaBenchmarkMetadata,
     benchmark_config: &ModelsBenchmarkConfig,
     results: &[ModelBenchmarkResult],
 ) {
-    println!("## Ranking\n");
-    println!(
+    writeln!(report, "## Ranking\n").ok();
+    writeln!(
+        report,
         "Ranked by success rate first, then by average total milliseconds across successful queries.\n"
-    );
-    println!("| Rank | Model | Parameter Size | Success Rate | Avg Total ms (ok) |");
-    println!("| ---: | --- | --- | ---: | ---: |");
+    )
+    .ok();
+    writeln!(
+        report,
+        "| Rank | Model | Parameter Size | Success Rate | Avg Total ms (ok) |"
+    )
+    .ok();
+    writeln!(report, "| ---: | --- | --- | ---: | ---: |").ok();
 
     let mut ranked = benchmark_config
         .models
@@ -868,7 +933,8 @@ fn print_models_benchmark_ranking(
     });
 
     for (index, (model, stats)) in ranked.iter().enumerate() {
-        println!(
+        writeln!(
+            report,
             "| {} | {} | {} | {} | {} |",
             index + 1,
             escape_markdown_cell(model),
@@ -882,10 +948,15 @@ fn print_models_benchmark_ranking(
                 .avg_total_ms_ok
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "failed".to_string()),
-        );
+        )
+        .ok();
     }
 
-    println!();
+    writeln!(report).ok();
+}
+
+fn benchmark_output_is_stdout(path: &std::path::Path) -> bool {
+    path.as_os_str() == "-"
 }
 
 fn format_success_rate(success_count: usize, total_count: usize) -> String {
@@ -1175,6 +1246,14 @@ fn normalize_request(request: String) -> Result<String> {
     Ok(request.to_string())
 }
 
+fn resolve_request(parts: &[String]) -> Result<Option<String>> {
+    if parts.is_empty() {
+        return Ok(None);
+    }
+
+    normalize_request(parts.join(" ")).map(Some)
+}
+
 fn select_command<'a>(
     plan: &'a CommandPlan,
     prompt: &str,
@@ -1296,7 +1375,7 @@ mod tests {
         ModelBenchmarkResult, TerminalEnvironmentStatus, apply_model_override,
         compute_model_benchmark_stats, duration_to_ms, format_bytes_from_kib,
         format_bytes_from_mib, format_success_rate, normalize_request, parse_mem_total_kib,
-        select_command,
+        resolve_request, select_command,
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
@@ -1407,6 +1486,25 @@ mod tests {
         let error = normalize_request("   ".into()).expect_err("blank request should fail");
 
         assert!(error.to_string().contains("request must not be empty"));
+    }
+
+    #[test]
+    fn resolves_multi_part_request() {
+        let request = resolve_request(&[
+            "ping".to_string(),
+            "google".to_string(),
+            "five".to_string(),
+            "times".to_string(),
+        ])
+        .expect("request parts should exist")
+        .expect("request should normalize");
+
+        assert_eq!(request, "ping google five times");
+    }
+
+    #[test]
+    fn does_not_resolve_empty_request_parts() {
+        assert_eq!(resolve_request(&[]).expect("request should resolve"), None);
     }
 
     #[test]

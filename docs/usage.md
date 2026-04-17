@@ -3,37 +3,43 @@
 ## Run
 
 ```bash
-cargo run -- --config ./cli-bot.toml "Ping google five times"
+cli-bot "Ping google five times"
+```
+
+You can also omit the quotes and let `cli-bot` join the free arguments into one request:
+
+```bash
+cli-bot ping google five times
 ```
 
 Package-related requests use the resolved OS and package manager context.
 
 ```bash
-cargo run -- --config ./cli-bot.toml "Install btop"
+cli-bot "Install btop"
 ```
 
 If the planner cannot safely resolve a request into a shell command, `cli-bot` can fall back to a plain text response:
 
 ```bash
-cargo run -- --config ./cli-bot.toml "spell mantainence"
+cli-bot "spell mantainence"
 ```
 
 If you run `cli-bot` without a request string, it prompts you to type one interactively.
 
 ```bash
-cargo run -- --config ./cli-bot.toml
+cli-bot
 ```
 
 ## Dry Run
 
 ```bash
-cargo run -- --config ./cli-bot.toml --dry-run "Show disk usage for the current directory"
+cli-bot --dry-run "Show disk usage for the current directory"
 ```
 
 ## Quiet Output
 
 ```bash
-cargo run -- --config ./cli-bot.toml --quiet "Show disk usage for the current directory"
+cli-bot --quiet "Show disk usage for the current directory"
 ```
 
 `--quiet` hides cli-bot informational output such as:
@@ -50,13 +56,13 @@ Plain text responses, such as spelling corrections, are still shown because they
 ## Print Structured Plan
 
 ```bash
-cargo run -- --config ./cli-bot.toml --print-plan "List the ten largest files here"
+cli-bot --print-plan "List the ten largest files here"
 ```
 
 ## Benchmark
 
 ```bash
-cargo run -- --config ./cli-bot.toml --benchmark --dry-run "Ping google five times"
+cli-bot --benchmark --dry-run "Ping google five times"
 ```
 
 This prints:
@@ -69,7 +75,19 @@ This prints:
 ## Models Benchmark
 
 ```bash
-cargo run -- --config ./cli-bot.toml --models-benchmark
+cli-bot --models-benchmark
+```
+
+Or write the Markdown report directly to a file:
+
+```bash
+cli-bot --models-benchmark docs/models-benchmark-report.md
+```
+
+You can also use:
+
+```bash
+cli-bot --models-benchmark=docs/models-benchmark-report.md
 ```
 
 This mode:
@@ -79,6 +97,7 @@ This mode:
 - captures planner time and text-fallback time when unresolved
 - includes host system details at the top of the report, including GPU VRAM when it can be detected
 - prints a Markdown report with a query-vs-model summary table, per-model summary, ranking, and detailed responses
+- writes to stdout by default, or to the provided Markdown filename when one is passed to `--models-benchmark`
 
 Commands are never executed in this mode. It is for comparing model behavior and response quality.
 
@@ -87,7 +106,7 @@ The current published benchmark report is available at [Models Benchmark Report]
 ## Color Output
 
 ```bash
-cargo run -- --config ./cli-bot.toml --color always --check
+cli-bot --color always --check
 ```
 
 Available values:
@@ -101,7 +120,7 @@ If the `NO_COLOR` environment variable is set, color output is disabled.
 ## Model Override
 
 ```bash
-cargo run -- --config ./cli-bot.toml --model lfm2:latest --benchmark --dry-run "Ping google five times"
+cli-bot --model lfm2:latest --benchmark --dry-run "Ping google five times"
 ```
 
 `--model` overrides `ollama.model` from the config file for that single invocation. It also affects `--check`.
@@ -109,7 +128,7 @@ cargo run -- --config ./cli-bot.toml --model lfm2:latest --benchmark --dry-run "
 ## LLM Best Choice
 
 ```bash
-cargo run -- --config ./cli-bot.toml --auto-select-best "Ping google five times"
+cli-bot --auto-select-best "Ping google five times"
 ```
 
 When multiple commands are returned, `--auto-select-best` uses the command marked by the LLM as `recommended: true`.
@@ -118,7 +137,7 @@ The same behavior can be enabled by default with `ui.auto_select_recommended = t
 ## Verbose Debugging
 
 ```bash
-cargo run -- --config ./cli-bot.toml --model lfm2.5-thinking:latest --verbose --benchmark "Ping google five times"
+cli-bot --model lfm2.5-thinking:latest --verbose --benchmark "Ping google five times"
 ```
 
 `--verbose` prints:
@@ -136,7 +155,7 @@ This is intended for debugging model-specific formatting errors.
 ## Environment Check
 
 ```bash
-cargo run -- --config ./cli-bot.toml --check
+cli-bot --check
 ```
 
 This verifies:

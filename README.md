@@ -12,6 +12,12 @@ cargo install cli-bot
 cli-bot "Ping google five times"
 ```
 
+You can also skip the quotes for simple requests:
+
+```bash
+cli-bot ping google five times
+```
+
 On macOS, you can also install with Homebrew:
 
 ```bash
@@ -83,6 +89,12 @@ It is meant to feel less like a chatbot and more like a sharp command-line copil
 
 ```bash
 cli-bot "Ping google five times"
+```
+
+Unquoted arguments also work:
+
+```bash
+cli-bot ping google five times
 ```
 
 You can also run `cli-bot` with no request string and it will prompt you interactively.
@@ -464,6 +476,7 @@ If `NO_COLOR` is set, color output is disabled.
 - `--print-plan`: print the structured planner response
 - `--benchmark`: print planning, execution, and total elapsed time in milliseconds
 - `--models-benchmark`: run configured model/query benchmarks and print a Markdown report
+- `--models-benchmark [file]`: run configured model/query benchmarks and print Markdown to stdout or the given file
 - `--check`: verify config, Ollama connectivity, model availability, and editor resolution
 - `--color <auto|always|never>`: control ANSI color output
 - `--quiet`: hide cli-bot informational output and only show the selected command output
