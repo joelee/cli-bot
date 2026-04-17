@@ -4,6 +4,16 @@ All notable changes to `cli-bot` will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [0.2.2] - 2026-04-17
+
+### Added
+
+- Unquoted free-argument request parsing so `cli-bot ping google five times` works without surrounding quotes ([#3](https://github.com/joelee/cli-bot/issues/3))
+
+### Changed
+
+- `docs/usage.md` now uses the installed `cli-bot` command in examples instead of `cargo run --`
+
 ## [0.2.1] - 2026-04-04
 
 ### Added
@@ -14,6 +24,7 @@ The format is based on Keep a Changelog.
 - Host system details at the top of the models benchmark report, including OS, kernel, CPU, GPU, and memory
 - Best-effort GPU VRAM reporting in the models benchmark host section
 - Per-model benchmark summary, success rate, and ranking sections in the Markdown benchmark report
+- Optional file output for `--models-benchmark`, with detailed results grouped by query first for easier model comparison
 - [Roadmap](docs/roadmap.md) for future features beyond the current release scope
 
 ### Changed
@@ -21,6 +32,7 @@ The format is based on Keep a Changelog.
 - CLI command generation remains the priority, with direct text responses only after the command planner explicitly marks a request as unresolved
 - Package-manager instructions are now restricted to clearly package-related requests to reduce false positives
 - Documentation now links to the published benchmark report that justifies `lfm2:latest` as the default model
+- Unquoted free arguments are now joined into a single natural-language request, so `cli-bot ping google five times` works without extra quotes
 
 ## [0.2.0] - 2026-04-04
 
