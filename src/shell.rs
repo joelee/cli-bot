@@ -88,7 +88,8 @@ fn truncate_output(output: String, max_output_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_output;
+    use super::{execute, truncate_output};
+    use crate::config::ExecutionConfig;
 
     #[test]
     fn truncates_large_output() {
@@ -98,5 +99,35 @@ mod tests {
     #[test]
     fn keeps_small_output() {
         assert_eq!(truncate_output("abc".into(), 4), "abc");
+    }
+
+    #[test]
+    fn execute_returns_output_when_capture_enabled() {
+        let config = ExecutionConfig {
+            shell: "/bin/sh".into(),
+            shell_arg: "-c".into(),
+            preferred_editor: None,
+        };
+
+        let result = execute("printf 'hello'", &config, true, 10)
+            .expect("captured execution should succeed");
+
+        assert_eq!(result.exit_status, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("hello"));
+        assert_eq!(result.stderr.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn execute_returns_error_for_failed_command() {
+        let config = ExecutionConfig {
+            shell: "/bin/sh".into(),
+            shell_arg: "-c".into(),
+            preferred_editor: None,
+        };
+
+        match execute("exit 7", &config, false, 0) {
+            Ok(_) => panic!("command should fail"),
+            Err(error) => assert!(error.to_string().contains("command exited with status")),
+        }
     }
 }

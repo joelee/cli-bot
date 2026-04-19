@@ -89,9 +89,11 @@ The repository now includes a dedicated GitHub Actions workflow at `.github/work
 It:
 
 - installs Rust with `llvm-tools-preview`
+- installs `cargo2junit` for JUnit XML export
 - runs `bash ./scripts/coverage-unit.sh`
 - uploads the HTML coverage output as a workflow artifact
 - uploads `target/coverage/lcov.info` to Codecov
+- uploads unit test results to Codecov with `codecov/test-results-action@v1`
 
 If you want to run the same coverage step in another workflow, use:
 
@@ -106,6 +108,7 @@ The uploaded artifact currently contains:
 - `target/coverage/unit-report.txt`
 - `target/coverage/unit-tests.profdata`
 - `target/coverage/lcov.info`
+- `target/test-results/unit-tests.xml`
 
 The repository also includes `.github/workflows/coverage-pages.yml`, which publishes the generated HTML coverage site to GitHub Pages on pushes to `main`.
 

@@ -4,6 +4,25 @@ All notable changes to `cli-bot` will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [0.3.1] - 2026-04-19
+
+### Changed
+
+- Increased unit test coverage across CLI orchestration, session storage, shell execution, and prompt helpers
+- Added Codecov unit test result uploads using `codecov/test-results-action@v1`
+- Expanded the unit coverage workflow to produce and upload JUnit XML test results
+
+### Added
+
+- `--interactive` / `-i` mode to keep prompting for requests until `Ctrl-C` or `/quit`
+- interactive prompt styling with cyan `cli-bot`, gray `>`, red `Error:` output on command failure, and a red `cli-bot` prompt after the failure
+- interactive startup hint showing `/quit` and `Ctrl-C` exit options
+
+### Testing
+
+- Added targeted unit tests for benchmark rendering, session command helpers, shell execution branches, and session text/output helpers
+- Added CI test result export through `cargo2junit` for Codecov ingestion
+
 ## [0.3.0] - 2026-04-18
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "cli-bot"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Translate natural-language requests into shell commands with Ollama"
 license = "Apache-2.0"
@@ -14,6 +14,7 @@ categories = ["command-line-utilities"]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 dialoguer = "0.11"
+console = "0.15"
 owo-colors = "4.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }

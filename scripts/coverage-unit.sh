@@ -58,7 +58,7 @@ printf 'Merging profile data\n'
 "$LLVM_PROFDATA_BIN" merge -sparse target/coverage/unit-*.profraw -o target/coverage/unit-tests.profdata
 
 BIN_PATH=''
-for candidate in target/debug/deps/cli_bot-*; do
+while IFS= read -r candidate; do
   case "$candidate" in
     *.d|*.rlib|*.rmeta)
       continue
@@ -66,7 +66,7 @@ for candidate in target/debug/deps/cli_bot-*; do
   esac
   BIN_PATH="$candidate"
   break
-done
+done < <(ls -1t target/debug/deps/cli_bot-*)
 
 if [[ -z "$BIN_PATH" ]]; then
   printf 'Error: could not locate compiled unit test binary under target/debug/deps\n' >&2

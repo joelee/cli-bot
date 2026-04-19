@@ -27,11 +27,22 @@ jobs:
         with:
           components: llvm-tools-preview
 
+      - name: Install cargo2junit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo2junit
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Run unit coverage
         run: bash ./scripts/coverage-unit.sh
+
+      - name: Run unit tests with JSON output
+        if: always()
+        run: |
+          mkdir -p target/test-results
+          cargo test --lib -- --format json --report-time | cargo2junit > target/test-results/unit-tests.xml
 
       - name: Upload unit coverage artifact
         if: always()
@@ -43,6 +54,7 @@ jobs:
             target/coverage/unit-report.txt
             target/coverage/unit-tests.profdata
             target/coverage/lcov.info
+            target/test-results/unit-tests.xml
           if-no-files-found: warn
 
       - name: Upload coverage to Codecov
@@ -53,3 +65,10 @@ jobs:
           fail_ci_if_error: false
           use_oidc: true
           verbose: true
+
+      - name: Upload test results to Codecov
+        if: always()
+        uses: codecov/test-results-action@v1
+        with:
+          files: target/test-results/unit-tests.xml
+          fail_ci_if_error: false
