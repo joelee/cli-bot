@@ -130,4 +130,18 @@ mod tests {
             Err(error) => assert!(error.to_string().contains("command exited with status")),
         }
     }
+
+    #[test]
+    fn execute_returns_error_for_failed_captured_command() {
+        let config = ExecutionConfig {
+            shell: "/bin/sh".into(),
+            shell_arg: "-c".into(),
+            preferred_editor: None,
+        };
+
+        match execute("printf 'oops' >&2; exit 2", &config, true, 100) {
+            Ok(_) => panic!("captured command should fail"),
+            Err(error) => assert!(error.to_string().contains("command exited with status")),
+        }
+    }
 }

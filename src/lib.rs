@@ -266,11 +266,7 @@ pub fn run(cli: Cli) -> Result<()> {
         let mut prompt_in_error_state = false;
 
         if show_output {
-            println!(
-                "Enter {} or press {} to exit Interactive Mode.",
-                output.accent("'/quit'"),
-                output.accent("'Ctrl-C'")
-            );
+            println!("{}", interactive_entry_hint(&output));
             println!();
         }
 
@@ -1546,7 +1542,24 @@ fn prompt_for_request(error_state: bool) -> Result<String> {
         return normalize_request(request);
     }
 
-    let theme = ColorfulTheme {
+    let theme = interactive_prompt_theme(error_state);
+
+    Input::<String>::with_theme(&theme)
+        .with_prompt("")
+        .validate_with(|input: &String| -> std::result::Result<(), &str> {
+            if input.trim().is_empty() {
+                Err("request must not be empty")
+            } else {
+                Ok(())
+            }
+        })
+        .interact_text()
+        .context("failed to capture request from terminal")
+        .and_then(normalize_request)
+}
+
+fn interactive_prompt_theme(error_state: bool) -> ColorfulTheme {
+    ColorfulTheme {
         prompt_prefix: style("".to_string()).for_stderr().dim(),
         prompt_suffix: style(format!(
             "{}{}",
@@ -1563,20 +1576,15 @@ fn prompt_for_request(error_state: bool) -> Result<String> {
         prompt_style: console::Style::new().dim(),
         values_style: console::Style::new().for_stderr(),
         ..ColorfulTheme::default()
-    };
+    }
+}
 
-    Input::<String>::with_theme(&theme)
-        .with_prompt("")
-        .validate_with(|input: &String| -> std::result::Result<(), &str> {
-            if input.trim().is_empty() {
-                Err("request must not be empty")
-            } else {
-                Ok(())
-            }
-        })
-        .interact_text()
-        .context("failed to capture request from terminal")
-        .and_then(normalize_request)
+fn interactive_entry_hint(output: &OutputStyler) -> String {
+    format!(
+        "Enter {} or press {} to exit Interactive Mode.",
+        output.accent("'/quit'"),
+        output.accent("'Ctrl-C'")
+    )
 }
 
 fn should_quit_interactive(request: &str) -> bool {
@@ -1749,9 +1757,10 @@ mod tests {
         command_output, compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell,
         format_bytes_from_kib, format_bytes_from_mib, format_command_plan_response,
         format_success_rate, handle_interactive_request_error, handle_session_command,
-        interactive_prompt_cancelled, normalize_request, parse_mem_total_kib,
-        print_benchmark_report, render_models_benchmark_markdown, resolve_request,
-        run_models_benchmark, select_command, should_quit_interactive,
+        interactive_entry_hint, interactive_prompt_cancelled, interactive_prompt_theme,
+        normalize_request, parse_mem_total_kib, print_benchmark_report,
+        render_models_benchmark_markdown, resolve_request, run_models_benchmark, select_command,
+        should_quit_interactive,
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
@@ -1993,6 +2002,37 @@ mod tests {
             .expect_err("non-command failures should still be fatal");
 
         assert!(propagated.to_string().contains("failed to contact Ollama"));
+    }
+
+    #[test]
+    fn interactive_prompt_theme_switches_prompt_color_on_error() {
+        let normal_rendered = format!("{}", interactive_prompt_theme(false).prompt_suffix);
+        let error_rendered = format!("{}", interactive_prompt_theme(true).prompt_suffix);
+        let normal = console::strip_ansi_codes(&normal_rendered);
+        let error = console::strip_ansi_codes(&error_rendered);
+
+        assert_eq!(normal, "cli-bot>");
+        assert_eq!(error, "cli-bot>");
+    }
+
+    #[test]
+    fn interactive_entry_hint_mentions_quit_and_ctrl_c() {
+        let output = OutputStyler::new(ColorMode::Never);
+        let hint = interactive_entry_hint(&output);
+
+        assert!(hint.contains("'/quit'"));
+        assert!(hint.contains("'Ctrl-C'"));
+        assert!(hint.contains("Interactive Mode"));
+    }
+
+    #[test]
+    fn interactive_entry_hint_uses_accented_fragments_when_colors_enabled() {
+        let output = OutputStyler::new(ColorMode::Always);
+        let hint = interactive_entry_hint(&output);
+
+        assert!(hint.contains("'/quit'"));
+        assert!(hint.contains("'Ctrl-C'"));
+        assert!(hint.contains("\u{1b}["));
     }
 
     #[test]

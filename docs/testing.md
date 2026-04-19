@@ -48,7 +48,7 @@ bash ./scripts/coverage-unit.sh
 
 This script:
 
-- runs `cargo test --lib` with LLVM coverage instrumentation
+- runs `cargo test --lib` and `cargo test --test mock_ollama` with LLVM coverage instrumentation
 - merges `.profraw` files into `target/coverage/unit-tests.profdata`
 - prints a text coverage summary
 - writes an HTML report to `target/coverage/html/index.html`
