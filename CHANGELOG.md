@@ -4,6 +4,31 @@ All notable changes to `cli-bot` will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [0.3.0] - 2026-04-18
+
+### Added
+
+- Multi-turn session memory with local JSON-backed session storage and bounded prompt context
+- `--session [name]`, `--session-list`, `--session-show`, `--session-clear`, and `--no-session`
+- `session_memory` configuration for enabling, scoping, storing, and truncating local session data
+- Optional command stdout/stderr capture in session history, with prompt inclusion disabled by default
+- `session_memory.retention_days` for automatic session pruning
+- `ollama.use_chat_api` to switch between Ollama `/api/chat` and `/api/generate`
+
+### Changed
+
+- Session memory is enabled by default and scoped to the current working directory by default to avoid cross-project leakage
+- Planner and unresolved text fallback prompts now receive structured session context when available
+- Documentation now reflects the shipped session-store behavior in `0.3.0`
+
+### Testing
+
+- Added mocked integration coverage for planner transport, unresolved fallback, health checks, and session commands
+- Added `scripts/coverage-unit.sh` for repeatable LLVM-based unit coverage generation
+- Added GitHub Actions workflows for unit coverage artifacts and GitHub Pages coverage publishing
+- Added Codecov upload support from the unit coverage workflow
+- Added documentation for enabling GitHub Pages and browsing published coverage reports
+
 ## [0.2.2] - 2026-04-17
 
 ### Added

@@ -64,9 +64,15 @@ cargo package --list
 
 ## GitHub Actions
 
-The repository includes `.github/workflows/release-checks.yml`.
+The repository includes these workflows:
 
-It does two things:
+1. `.github/workflows/release-checks.yml`
+2. `.github/workflows/unit-coverage.yml`
+3. `.github/workflows/coverage-pages.yml`
+
+### Release Checks
+
+`release-checks.yml` does two things:
 
 1. Runs release checks on pull requests and pushes to `main`
 2. Prepares a publishable `.crate` artifact on version tags like `v0.1.0` or manual workflow dispatch
@@ -82,6 +88,33 @@ cargo package --list
 ```
 
 On matching tags or manual runs, the workflow also uploads the packaged crate from `target/package/*.crate` as a GitHub Actions artifact.
+
+### Unit Coverage
+
+`unit-coverage.yml` runs `bash ./scripts/coverage-unit.sh` and uploads:
+
+- `target/coverage/html/`
+- `target/coverage/unit-report.txt`
+- `target/coverage/unit-tests.profdata`
+- `target/coverage/lcov.info`
+
+It also uploads the LCOV report to Codecov.
+
+### Coverage Pages
+
+`coverage-pages.yml` rebuilds the unit-test HTML coverage report on pushes to `main` and deploys it to GitHub Pages.
+
+Before the first deployment succeeds, enable Pages in the repository settings:
+
+1. Open `Settings -> Pages`
+2. Set the source to `GitHub Actions`
+3. Allow the workflow deployment to publish the site
+
+Expected coverage site URL:
+
+```text
+https://joelee.github.io/cli-bot/
+```
 
 ## Publish
 

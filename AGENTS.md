@@ -12,6 +12,8 @@ This repository contains `cli-bot`, a Rust CLI that converts natural-language re
 - Prefer small, local changes over broad refactors.
 - Update docs in `docs/` when behavior, architecture, or configuration changes.
 - Update [CHANGELOG.md](CHANGELOG.md) when preparing or making a version bump.
+- When implementing a new feature, plan integration-test coverage as part of the feature work, not as an afterthought.
+- Prefer mocked integration tests for Ollama- or IO-driven features so new behavior is exercised through the real application flow without requiring external services.
 
 ## Verification
 

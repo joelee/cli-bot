@@ -1,0 +1,55 @@
+name: Unit Coverage
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Unit Test Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit coverage
+        run: bash ./scripts/coverage-unit.sh
+
+      - name: Upload unit coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-bot-unit-coverage-html
+          path: |
+            target/coverage/html/**
+            target/coverage/unit-report.txt
+            target/coverage/unit-tests.profdata
+            target/coverage/lcov.info
+          if-no-files-found: warn
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: target/coverage/lcov.info
+          fail_ci_if_error: false
+          use_oidc: true
+          verbose: true
