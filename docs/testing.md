@@ -48,7 +48,7 @@ bash ./scripts/coverage-unit.sh
 
 This script:
 
-- runs `cargo test --lib` with LLVM coverage instrumentation
+- runs `cargo test --lib` and `cargo test --test mock_ollama` with LLVM coverage instrumentation
 - merges `.profraw` files into `target/coverage/unit-tests.profdata`
 - prints a text coverage summary
 - writes an HTML report to `target/coverage/html/index.html`
@@ -89,9 +89,12 @@ The repository now includes a dedicated GitHub Actions workflow at `.github/work
 It:
 
 - installs Rust with `llvm-tools-preview`
+- installs `cargo-nextest` for stable JUnit XML export
 - runs `bash ./scripts/coverage-unit.sh`
+- runs `cargo nextest run --lib` with JUnit output configured in `.config/nextest.toml`
 - uploads the HTML coverage output as a workflow artifact
 - uploads `target/coverage/lcov.info` to Codecov
+- uploads unit test results to Codecov with `codecov/test-results-action@v1`
 
 If you want to run the same coverage step in another workflow, use:
 
@@ -106,6 +109,7 @@ The uploaded artifact currently contains:
 - `target/coverage/unit-report.txt`
 - `target/coverage/unit-tests.profdata`
 - `target/coverage/lcov.info`
+- `target/test-results/unit-tests.xml`
 
 The repository also includes `.github/workflows/coverage-pages.yml`, which publishes the generated HTML coverage site to GitHub Pages on pushes to `main`.
 

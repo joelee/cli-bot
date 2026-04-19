@@ -6,7 +6,7 @@ This document tracks future features that may be added after the current release
 
 ### Multi-turn Session Memory
 
-- Shipped in `0.3.0`
+- Shipped in `0.3.1`
 - Keeps short conversational context across follow-up requests in the same local session
 - Uses working-directory-scoped sessions by default to avoid cross-project leakage
 - See [Session Memory](session-memory.md) for the current behavior and future follow-up ideas

@@ -236,6 +236,7 @@ fn sample_cli(config_path: PathBuf, request: Vec<&str>) -> Cli {
         benchmark: false,
         verbose: false,
         quiet: true,
+        interactive: false,
         session: None,
         no_session: true,
         session_show: false,

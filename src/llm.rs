@@ -575,8 +575,8 @@ fn extract_json_document(response: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GenerateRequest, build_command_prompt, build_text_response_prompt, extract_json_document,
-        validate_plan,
+        GenerateRequest, OllamaStatus, build_command_prompt, build_text_response_prompt,
+        extract_json_document, validate_plan,
     };
     use crate::environment::{
         OperatingSystem, PackageManager, PackageManagerSource, ResolvedEnvironment,
@@ -637,6 +637,19 @@ mod tests {
 
         assert!(prompt.contains("Respond with plain text only"));
         assert!(prompt.contains("spell mantainence"));
+    }
+
+    #[test]
+    fn text_response_prompt_includes_session_context_when_present() {
+        let prompt = build_text_response_prompt(
+            "show that again",
+            Some("nvim"),
+            &sample_environment(),
+            Some("Session name: default\n1. request: find the config file"),
+        );
+
+        assert!(prompt.contains("Session context: Session name: default"));
+        assert!(prompt.contains("do not assume command output unless explicitly provided"));
     }
 
     #[test]
@@ -720,6 +733,17 @@ mod tests {
                 .to_string()
                 .contains("planner returned an empty command list")
         );
+    }
+
+    #[test]
+    fn check_service_status_fields_are_accessible() {
+        let status = OllamaStatus {
+            model_available: false,
+            version: Some("0.6.0".into()),
+        };
+
+        assert!(!status.model_available);
+        assert_eq!(status.version.as_deref(), Some("0.6.0"));
     }
 
     fn sample_environment() -> ResolvedEnvironment {

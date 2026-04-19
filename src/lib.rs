@@ -14,6 +14,8 @@ use std::{fmt::Write as _, fs};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use console::style;
+use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, Select};
 
 use crate::config::{AppConfig, ModelsBenchmarkConfig, is_known_editor, resolve_config_path};
@@ -78,6 +80,10 @@ pub struct Cli {
     /// Hide cli-bot informational output and only show the selected command's output.
     #[arg(short = 'q', long)]
     pub quiet: bool,
+
+    /// Keep prompting for new requests until Ctrl-C or /quit.
+    #[arg(short = 'i', long)]
+    pub interactive: bool,
 
     /// Use a named session, or the configured default when omitted.
     #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
@@ -255,11 +261,100 @@ pub fn run(cli: Cli) -> Result<()> {
             ))
         );
     }
+    if cli.interactive {
+        let mut next_request = resolve_request(&cli.request)?;
+        let mut prompt_in_error_state = false;
+
+        if show_output {
+            println!("{}", interactive_entry_hint(&output));
+            println!();
+        }
+
+        loop {
+            let request = match next_request.take() {
+                Some(request) => request,
+                None => match prompt_for_request(prompt_in_error_state) {
+                    Ok(request) => request,
+                    Err(error) if interactive_prompt_cancelled(&error) => return Ok(()),
+                    Err(error) => return Err(error),
+                },
+            };
+
+            if should_quit_interactive(&request) {
+                return Ok(());
+            }
+
+            let request_result = run_single_request(
+                &cli,
+                &config,
+                &resolved_environment,
+                &session_store,
+                session_requested,
+                session_name,
+                &planner,
+                preferred_editor.as_deref(),
+                &request,
+                total_start,
+                show_output,
+                verbose,
+                &output,
+            );
+
+            match request_result {
+                Ok(()) => {
+                    prompt_in_error_state = false;
+                }
+                Err(error) => {
+                    handle_interactive_request_error(&error, show_output, &output)?;
+                    prompt_in_error_state = true;
+                }
+            }
+
+            if show_output {
+                println!();
+            }
+        }
+    }
+
     let request = if cli.request.is_empty() {
-        prompt_for_request()?
+        prompt_for_request(false)?
     } else {
         resolve_request(&cli.request)?.expect("request parts should resolve when non-empty")
     };
+
+    run_single_request(
+        &cli,
+        &config,
+        &resolved_environment,
+        &session_store,
+        session_requested,
+        session_name,
+        &planner,
+        preferred_editor.as_deref(),
+        &request,
+        total_start,
+        show_output,
+        verbose,
+        &output,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_single_request(
+    cli: &Cli,
+    config: &AppConfig,
+    resolved_environment: &crate::environment::ResolvedEnvironment,
+    session_store: &SessionStore,
+    session_requested: bool,
+    session_name: Option<&str>,
+    planner: &OllamaClient,
+    preferred_editor: Option<&str>,
+    request: &str,
+    total_start: Instant,
+    show_output: bool,
+    verbose: bool,
+    output: &OutputStyler,
+) -> Result<()> {
     let mut session_record = if session_requested {
         Some(session_store.load(session_name)?)
     } else {
@@ -283,13 +378,13 @@ pub fn run(cli: Cli) -> Result<()> {
 
     let planning_start = Instant::now();
     let plan = planner.plan_commands(
-        &request,
+        request,
         &config.safety.destructive_substrings,
-        preferred_editor.as_deref(),
-        &resolved_environment,
+        preferred_editor,
+        resolved_environment,
         session_context.as_deref(),
         verbose,
-        &output,
+        output,
     )?;
     let mut planning_elapsed = planning_start.elapsed();
 
@@ -314,12 +409,12 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         let response_start = Instant::now();
         let text_response = planner.answer_unresolved(
-            &request,
-            preferred_editor.as_deref(),
-            &resolved_environment,
+            request,
+            preferred_editor,
+            resolved_environment,
             session_context.as_deref(),
             verbose,
-            &output,
+            output,
         )?;
         planning_elapsed += response_start.elapsed();
 
@@ -327,7 +422,7 @@ pub fn run(cli: Cli) -> Result<()> {
             && config.session_memory.save_text_responses
         {
             let turn = SessionTurn::unresolved_text(
-                &request,
+                request,
                 &text_response,
                 config.session_memory.include_working_directory,
                 &std::env::current_dir().context("failed to resolve current working directory")?,
@@ -340,7 +435,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
         if cli.benchmark && show_output {
             print_benchmark_report(
-                &output,
+                output,
                 &config.ollama.model,
                 planning_elapsed,
                 None,
@@ -355,7 +450,7 @@ pub fn run(cli: Cli) -> Result<()> {
     let selected = select_command(&plan, &config.ui.selection_prompt, auto_select_best)?;
     let mut session_turn = session_record.as_ref().map(|_| {
         SessionTurn::from_plan(
-            &request,
+            request,
             &plan,
             config.session_memory.include_working_directory,
             &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -400,7 +495,7 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         if cli.benchmark && show_output {
             print_benchmark_report(
-                &output,
+                output,
                 &config.ollama.model,
                 planning_elapsed,
                 None,
@@ -429,7 +524,7 @@ pub fn run(cli: Cli) -> Result<()> {
             }
             if cli.benchmark && show_output {
                 print_benchmark_report(
-                    &output,
+                    output,
                     &config.ollama.model,
                     planning_elapsed,
                     None,
@@ -465,7 +560,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
     if cli.benchmark && show_output {
         print_benchmark_report(
-            &output,
+            output,
             &config.ollama.model,
             planning_elapsed,
             Some(execution_elapsed),
@@ -1437,7 +1532,7 @@ fn apply_model_override(config: &mut AppConfig, model_override: Option<&str>) ->
     Ok(())
 }
 
-fn prompt_for_request() -> Result<String> {
+fn prompt_for_request(error_state: bool) -> Result<String> {
     if !io::stdin().is_terminal() {
         let mut request = String::new();
         io::stdin()
@@ -1447,8 +1542,10 @@ fn prompt_for_request() -> Result<String> {
         return normalize_request(request);
     }
 
-    Input::<String>::new()
-        .with_prompt("What would you like cli-bot to do?")
+    let theme = interactive_prompt_theme(error_state);
+
+    Input::<String>::with_theme(&theme)
+        .with_prompt("")
         .validate_with(|input: &String| -> std::result::Result<(), &str> {
             if input.trim().is_empty() {
                 Err("request must not be empty")
@@ -1459,6 +1556,60 @@ fn prompt_for_request() -> Result<String> {
         .interact_text()
         .context("failed to capture request from terminal")
         .and_then(normalize_request)
+}
+
+fn interactive_prompt_theme(error_state: bool) -> ColorfulTheme {
+    ColorfulTheme {
+        prompt_prefix: style("".to_string()).for_stderr().dim(),
+        prompt_suffix: style(format!(
+            "{}{}",
+            if error_state {
+                console::Style::new().for_stderr().red().apply_to("cli-bot")
+            } else {
+                console::Style::new()
+                    .for_stderr()
+                    .cyan()
+                    .apply_to("cli-bot")
+            },
+            console::Style::new().for_stderr().dim().apply_to(">")
+        )),
+        prompt_style: console::Style::new().dim(),
+        values_style: console::Style::new().for_stderr(),
+        ..ColorfulTheme::default()
+    }
+}
+
+fn interactive_entry_hint(output: &OutputStyler) -> String {
+    format!(
+        "Enter {} or press {} to exit Interactive Mode.",
+        output.accent("'/quit'"),
+        output.accent("'Ctrl-C'")
+    )
+}
+
+fn should_quit_interactive(request: &str) -> bool {
+    request.trim() == "/quit"
+}
+
+fn interactive_prompt_cancelled(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .contains("failed to capture request from terminal")
+}
+
+fn handle_interactive_request_error(
+    error: &anyhow::Error,
+    show_output: bool,
+    output: &OutputStyler,
+) -> Result<()> {
+    if error.to_string().contains("command exited with status") {
+        if show_output {
+            println!("{} {error}", output.error("Error:"));
+        }
+        return Ok(());
+    }
+
+    Err(anyhow::Error::msg(error.to_string()))
 }
 
 fn normalize_request(request: String) -> Result<String> {
@@ -1594,19 +1745,32 @@ impl TerminalEnvironmentStatus {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use super::{
-        ModelBenchmarkResult, TerminalEnvironmentStatus, apply_model_override,
-        compute_model_benchmark_stats, duration_to_ms, format_bytes_from_kib,
-        format_bytes_from_mib, format_success_rate, normalize_request, parse_mem_total_kib,
-        resolve_request, select_command,
+        BenchmarkHostInfo, Cli, ModelBenchmarkResult, TerminalEnvironmentStatus,
+        apply_model_override, benchmark_output_is_stdout, collect_benchmark_host_info,
+        command_output, compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell,
+        format_bytes_from_kib, format_bytes_from_mib, format_command_plan_response,
+        format_success_rate, handle_interactive_request_error, handle_session_command,
+        interactive_entry_hint, interactive_prompt_cancelled, interactive_prompt_theme,
+        normalize_request, parse_mem_total_kib, print_benchmark_report,
+        render_models_benchmark_markdown, resolve_request, run_models_benchmark, select_command,
+        should_quit_interactive,
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
-        SafetyConfig, SessionMemoryConfig, UiConfig,
+        SafetyConfig, SessionMemoryConfig, SessionScope, UiConfig,
     };
+    use crate::environment::{OperatingSystem, ResolvedEnvironment};
+    use crate::llm::OllamaBenchmarkMetadata;
+    use crate::output::{ColorMode, OutputStyler};
     use crate::planner::{CommandPlan, PlannedCommand};
+    use crate::session::{SessionRecord, SessionStore, SessionTurn};
 
     #[test]
     fn converts_duration_to_milliseconds() {
@@ -1757,6 +1921,336 @@ mod tests {
         assert!(!status.interactive_dialogs_supported());
     }
 
+    #[test]
+    fn select_command_rejects_empty_command_list() {
+        let plan = CommandPlan {
+            summary: None,
+            unresolved: false,
+            commands: vec![],
+        };
+
+        let error = select_command(&plan, "Choose", true).expect_err("selection should fail");
+
+        assert!(error.to_string().contains("planner returned no commands"));
+    }
+
+    #[test]
+    fn format_command_plan_response_includes_summary_and_rationale() {
+        let plan = CommandPlan {
+            summary: Some("Ping google".into()),
+            unresolved: false,
+            commands: vec![PlannedCommand {
+                command: "ping -c 5 google.com".into(),
+                description: "Ping five times".into(),
+                potentially_destructive: false,
+                recommended: true,
+                rationale: Some("Matches the request".into()),
+            }],
+        };
+
+        let response = format_command_plan_response(&plan);
+
+        assert!(response.contains("summary: Ping google"));
+        assert!(response.contains("ping -c 5 google.com [recommended]"));
+        assert!(response.contains("why: Matches the request"));
+    }
+
+    #[test]
+    fn escapes_markdown_cells() {
+        assert_eq!(escape_markdown_cell("a|b\nc"), "a\\|b c");
+    }
+
+    #[test]
+    fn benchmark_output_detects_stdout_marker() {
+        assert!(benchmark_output_is_stdout(PathBuf::from("-").as_path()));
+        assert!(!benchmark_output_is_stdout(
+            PathBuf::from("report.md").as_path()
+        ));
+    }
+
+    #[test]
+    fn interactive_mode_quits_on_quit_command() {
+        assert!(should_quit_interactive("/quit"));
+        assert!(should_quit_interactive("  /quit  "));
+        assert!(!should_quit_interactive("quit"));
+    }
+
+    #[test]
+    fn interactive_prompt_cancelled_matches_prompt_error() {
+        let error = anyhow::anyhow!("failed to capture request from terminal: interrupted");
+        assert!(interactive_prompt_cancelled(&error));
+
+        let other_error = anyhow::anyhow!("failed to read request from stdin");
+        assert!(!interactive_prompt_cancelled(&other_error));
+    }
+
+    #[test]
+    fn interactive_request_handler_swallows_command_exit_errors() {
+        let output = OutputStyler::new(ColorMode::Never);
+        let error = anyhow::anyhow!("command exited with status 7");
+
+        handle_interactive_request_error(&error, false, &output)
+            .expect("command exit errors should be recoverable in interactive mode");
+    }
+
+    #[test]
+    fn interactive_request_handler_propagates_non_command_errors() {
+        let output = OutputStyler::new(ColorMode::Never);
+        let error = anyhow::anyhow!("failed to contact Ollama");
+
+        let propagated = handle_interactive_request_error(&error, false, &output)
+            .expect_err("non-command failures should still be fatal");
+
+        assert!(propagated.to_string().contains("failed to contact Ollama"));
+    }
+
+    #[test]
+    fn interactive_prompt_theme_switches_prompt_color_on_error() {
+        let normal_rendered = format!("{}", interactive_prompt_theme(false).prompt_suffix);
+        let error_rendered = format!("{}", interactive_prompt_theme(true).prompt_suffix);
+        let normal = console::strip_ansi_codes(&normal_rendered);
+        let error = console::strip_ansi_codes(&error_rendered);
+
+        assert_eq!(normal, "cli-bot>");
+        assert_eq!(error, "cli-bot>");
+    }
+
+    #[test]
+    fn interactive_entry_hint_mentions_quit_and_ctrl_c() {
+        let output = OutputStyler::new(ColorMode::Never);
+        let hint = interactive_entry_hint(&output);
+
+        assert!(hint.contains("'/quit'"));
+        assert!(hint.contains("'Ctrl-C'"));
+        assert!(hint.contains("Interactive Mode"));
+    }
+
+    #[test]
+    fn interactive_entry_hint_uses_accented_fragments_when_colors_enabled() {
+        let output = OutputStyler::new(ColorMode::Always);
+        let hint = interactive_entry_hint(&output);
+
+        assert!(hint.contains("'/quit'"));
+        assert!(hint.contains("'Ctrl-C'"));
+        assert!(hint.contains("\u{1b}["));
+    }
+
+    #[test]
+    fn collect_benchmark_host_info_returns_non_empty_fields() {
+        let host_info = collect_benchmark_host_info();
+
+        assert!(!host_info.hostname.is_empty());
+        assert!(!host_info.os.is_empty());
+        assert!(!host_info.kernel.is_empty());
+        assert!(!host_info.cpu.is_empty());
+        assert!(!host_info.gpu.is_empty());
+        assert!(!host_info.gpu_vram.is_empty());
+        assert!(!host_info.memory.is_empty());
+    }
+
+    #[test]
+    fn command_output_returns_none_for_failing_commands() {
+        assert!(command_output("sh", &["-c", "exit 1"]).is_none());
+        assert!(command_output("sh", &["-c", "printf ''"]).is_none());
+    }
+
+    #[test]
+    fn render_models_benchmark_markdown_includes_summary_sections() {
+        let mut parameter_sizes = BTreeMap::new();
+        parameter_sizes.insert("lfm2:latest".to_string(), "12B".to_string());
+        let host_info = BenchmarkHostInfo {
+            hostname: "devbox".into(),
+            os: "Linux".into(),
+            kernel: "6.8.0".into(),
+            cpu: "CPU".into(),
+            gpu: "GPU".into(),
+            gpu_vram: "8.0 GiB".into(),
+            memory: "32.0 GiB".into(),
+        };
+        let metadata = OllamaBenchmarkMetadata {
+            version: Some("0.6.0".into()),
+            model_parameter_sizes: parameter_sizes,
+        };
+        let benchmark_config = ModelsBenchmarkConfig {
+            models: vec!["lfm2:latest".into(), "qwen3.5:latest".into()],
+            queries: vec!["Ping google five times".into(), "spell mantainence".into()],
+        };
+        let results = vec![
+            ModelBenchmarkResult {
+                model: "lfm2:latest".into(),
+                query: "Ping google five times".into(),
+                planner_ms: 10,
+                fallback_ms: None,
+                total_ms: 10,
+                unresolved: false,
+                response_kind: "command_plan".into(),
+                response: "ping -c 5 google.com".into(),
+                error: None,
+            },
+            ModelBenchmarkResult {
+                model: "qwen3.5:latest".into(),
+                query: "Ping google five times".into(),
+                planner_ms: 20,
+                fallback_ms: None,
+                total_ms: 20,
+                unresolved: false,
+                response_kind: "error".into(),
+                response: String::new(),
+                error: Some("planner failed".into()),
+            },
+            ModelBenchmarkResult {
+                model: "lfm2:latest".into(),
+                query: "spell mantainence".into(),
+                planner_ms: 11,
+                fallback_ms: Some(4),
+                total_ms: 15,
+                unresolved: true,
+                response_kind: "text_response".into(),
+                response: "maintenance".into(),
+                error: None,
+            },
+        ];
+
+        let markdown =
+            render_models_benchmark_markdown(&host_info, &metadata, &benchmark_config, &results);
+
+        assert!(markdown.contains("# Model Benchmark Report"));
+        assert!(markdown.contains("## Summary Table"));
+        assert!(markdown.contains("## Model Summary"));
+        assert!(markdown.contains("## Ranking"));
+        assert!(markdown.contains("## Detailed Results"));
+        assert!(markdown.contains("failed"));
+        assert!(markdown.contains("maintenance"));
+        assert!(markdown.contains("lfm2:latest"));
+    }
+
+    #[test]
+    fn handle_session_command_requires_enabled_session() {
+        let (store, temp_root) = temp_session_store();
+        let cli = sample_cli();
+        let output = OutputStyler::new(ColorMode::Never);
+
+        let error = handle_session_command(&cli, false, None, &store, false, &output)
+            .expect_err("disabled session should fail");
+
+        assert!(error.to_string().contains("session memory is disabled"));
+        fs::remove_dir_all(temp_root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn handle_session_command_rejects_conflicting_flags() {
+        let (store, temp_root) = temp_session_store();
+        let mut cli = sample_cli();
+        cli.session_show = true;
+        cli.session_clear = true;
+        let output = OutputStyler::new(ColorMode::Never);
+
+        let error = handle_session_command(&cli, true, None, &store, false, &output)
+            .expect_err("conflicting session flags should fail");
+
+        assert!(error.to_string().contains("cannot be used together"));
+        fs::remove_dir_all(temp_root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn handle_session_command_lists_shows_and_clears_sessions() {
+        let (store, temp_root) = temp_session_store();
+        let output = OutputStyler::new(ColorMode::Never);
+        let mut record = SessionRecord::new(
+            "default".into(),
+            SessionScope::Global,
+            PathBuf::from("/tmp/project"),
+        );
+        record.push_turn(SessionTurn {
+            timestamp_epoch_ms: 1,
+            request: "find git config".into(),
+            working_directory: None,
+            plan_summary: Some("Locate config".into()),
+            unresolved: false,
+            command_choices: Vec::new(),
+            selected_command: Some("fd gitconfig ~".into()),
+            selected_command_rationale: None,
+            confirmation_required: false,
+            text_response: None,
+            execution: None,
+        });
+        store.save(&mut record).expect("session should save");
+
+        let mut list_cli = sample_cli();
+        list_cli.session_list = true;
+        handle_session_command(&list_cli, true, None, &store, false, &output)
+            .expect("session list should succeed");
+
+        let mut show_cli = sample_cli();
+        show_cli.session_show = true;
+        handle_session_command(&show_cli, true, None, &store, false, &output)
+            .expect("session show should succeed");
+
+        let mut clear_cli = sample_cli();
+        clear_cli.session_clear = true;
+        handle_session_command(&clear_cli, true, None, &store, false, &output)
+            .expect("session clear should succeed");
+
+        assert!(!store.clear(None).expect("clear should be idempotent"));
+        fs::remove_dir_all(temp_root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn run_models_benchmark_rejects_missing_models() {
+        let config = sample_config();
+        let output = OutputStyler::new(ColorMode::Never);
+
+        let error = run_models_benchmark(
+            config,
+            sample_resolved_environment(),
+            false,
+            &output,
+            PathBuf::from("-"),
+        )
+        .expect_err("missing models should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("models_benchmark.models is empty")
+        );
+    }
+
+    #[test]
+    fn run_models_benchmark_rejects_missing_queries() {
+        let mut config = sample_config();
+        config.models_benchmark.models = vec!["lfm2:latest".into()];
+        let output = OutputStyler::new(ColorMode::Never);
+
+        let error = run_models_benchmark(
+            config,
+            sample_resolved_environment(),
+            false,
+            &output,
+            PathBuf::from("-"),
+        )
+        .expect_err("missing queries should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("models_benchmark.queries is empty")
+        );
+    }
+
+    #[test]
+    fn print_benchmark_report_executes_without_error() {
+        let output = OutputStyler::new(ColorMode::Never);
+
+        print_benchmark_report(
+            &output,
+            "lfm2:latest",
+            Duration::from_millis(12),
+            Some(Duration::from_millis(3)),
+            Duration::from_millis(15),
+        );
+    }
+
     fn sample_config() -> AppConfig {
         AppConfig {
             ollama: OllamaConfig {
@@ -1785,6 +2279,57 @@ mod tests {
             session_memory: SessionMemoryConfig::default(),
             models_benchmark: ModelsBenchmarkConfig::default(),
         }
+    }
+
+    fn sample_resolved_environment() -> ResolvedEnvironment {
+        ResolvedEnvironment {
+            os: OperatingSystem::Linux,
+            distro: None,
+            detected_package_manager: None,
+            effective_package_manager: None,
+            package_manager_source: None,
+            effective_package_manager_available: false,
+        }
+    }
+
+    fn sample_cli() -> Cli {
+        Cli {
+            request: Vec::new(),
+            config: None,
+            model: None,
+            check: false,
+            models_benchmark: None,
+            auto_select_best: false,
+            color: ColorMode::Never,
+            dry_run: false,
+            print_plan: false,
+            benchmark: false,
+            verbose: false,
+            quiet: false,
+            interactive: false,
+            session: None,
+            no_session: false,
+            session_show: false,
+            session_list: false,
+            session_clear: false,
+        }
+    }
+
+    fn temp_session_store() -> (SessionStore, PathBuf) {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!("cli-bot-lib-test-{unique}"));
+        fs::create_dir_all(&temp_root).expect("temp root should exist");
+        let config = SessionMemoryConfig {
+            storage_dir: temp_root.display().to_string(),
+            scope: SessionScope::Global,
+            ..SessionMemoryConfig::default()
+        };
+        let store = SessionStore::new(config).expect("store should initialize");
+
+        (store, temp_root)
     }
 
     #[test]
