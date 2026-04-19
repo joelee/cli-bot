@@ -3,6 +3,7 @@ mod environment;
 mod llm;
 mod output;
 mod planner;
+mod session;
 mod shell;
 
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ pub use crate::output::{ColorMode, OutputStyler};
 use crate::planner::{
     CommandPlan, PlannedCommand, command_requires_confirmation, recommended_command,
 };
+use crate::session::{SessionExecution, SessionStore, SessionTurn};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -76,6 +78,26 @@ pub struct Cli {
     /// Hide cli-bot informational output and only show the selected command's output.
     #[arg(short = 'q', long)]
     pub quiet: bool,
+
+    /// Use a named session, or the configured default when omitted.
+    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
+    pub session: Option<String>,
+
+    /// Disable session memory for this invocation.
+    #[arg(long)]
+    pub no_session: bool,
+
+    /// Print the current session turns and exit.
+    #[arg(long)]
+    pub session_show: bool,
+
+    /// List locally stored sessions and exit.
+    #[arg(long)]
+    pub session_list: bool,
+
+    /// Clear the current session and exit.
+    #[arg(long)]
+    pub session_clear: bool,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -83,10 +105,21 @@ pub fn run(cli: Cli) -> Result<()> {
     let output = OutputStyler::new(cli.color.clone());
     let show_output = !cli.quiet;
     let verbose = cli.verbose && show_output;
-    let config_path = resolve_config_path(cli.config)?;
+    let config_path = resolve_config_path(cli.config.clone())?;
     let mut config = AppConfig::load(&config_path)?;
     apply_model_override(&mut config, cli.model.as_deref())?;
     let resolved_environment = resolve_environment(&config.environment)?;
+    let session_store = SessionStore::new(config.session_memory.clone())?;
+    let pruned_sessions = session_store.prune_expired()?;
+    let session_requested = !cli.no_session && session_store.enabled();
+    let session_name = if session_requested {
+        cli.session.as_deref().and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+    } else {
+        None
+    };
 
     if verbose {
         eprintln!(
@@ -141,6 +174,34 @@ pub fn run(cli: Cli) -> Result<()> {
                     .unwrap_or("unknown")
             ))
         );
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!(
+                "[verbose] session memory: {}",
+                if session_requested {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ))
+        );
+        if session_requested {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!(
+                    "[verbose] session name: {}",
+                    session_name.unwrap_or(session_store.default_name())
+                ))
+            );
+        }
+        if pruned_sessions > 0 {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!(
+                    "[verbose] pruned {pruned_sessions} expired sessions"
+                ))
+            );
+        }
     }
 
     if cli.check {
@@ -149,6 +210,17 @@ pub fn run(cli: Cli) -> Result<()> {
             config,
             resolved_environment,
             verbose,
+            show_output,
+            &output,
+        );
+    }
+
+    if cli.session_show || cli.session_clear || cli.session_list {
+        return handle_session_command(
+            &cli,
+            session_requested,
+            session_name,
+            &session_store,
             show_output,
             &output,
         );
@@ -188,11 +260,25 @@ pub fn run(cli: Cli) -> Result<()> {
     } else {
         resolve_request(&cli.request)?.expect("request parts should resolve when non-empty")
     };
+    let mut session_record = if session_requested {
+        Some(session_store.load(session_name)?)
+    } else {
+        None
+    };
+    let session_context = session_record
+        .as_ref()
+        .and_then(|record| session_store.render_prompt_context(record));
     if verbose {
         eprintln!(
             "{}",
             output.stderr_dim(&format!("[verbose] natural language request: {request}"))
         );
+        if let Some(session_context) = session_context.as_deref() {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!("[verbose] session context:\n{session_context}"))
+            );
+        }
     }
 
     let planning_start = Instant::now();
@@ -201,6 +287,7 @@ pub fn run(cli: Cli) -> Result<()> {
         &config.safety.destructive_substrings,
         preferred_editor.as_deref(),
         &resolved_environment,
+        session_context.as_deref(),
         verbose,
         &output,
     )?;
@@ -230,10 +317,24 @@ pub fn run(cli: Cli) -> Result<()> {
             &request,
             preferred_editor.as_deref(),
             &resolved_environment,
+            session_context.as_deref(),
             verbose,
             &output,
         )?;
         planning_elapsed += response_start.elapsed();
+
+        if let Some(record) = session_record.as_mut()
+            && config.session_memory.save_text_responses
+        {
+            let turn = SessionTurn::unresolved_text(
+                &request,
+                &text_response,
+                config.session_memory.include_working_directory,
+                &std::env::current_dir().context("failed to resolve current working directory")?,
+            );
+            record.push_turn(turn);
+            session_store.save(record)?;
+        }
 
         println!("{text_response}");
 
@@ -252,6 +353,14 @@ pub fn run(cli: Cli) -> Result<()> {
 
     let auto_select_best = config.ui.auto_select_recommended || cli.auto_select_best;
     let selected = select_command(&plan, &config.ui.selection_prompt, auto_select_best)?;
+    let mut session_turn = session_record.as_ref().map(|_| {
+        SessionTurn::from_plan(
+            &request,
+            &plan,
+            config.session_memory.include_working_directory,
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        )
+    });
 
     if show_output && auto_select_best && plan.commands.len() > 1 && selected.recommended {
         println!(
@@ -274,6 +383,21 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 
     if cli.dry_run {
+        if let (Some(record), Some(turn)) = (session_record.as_mut(), session_turn.as_mut())
+            && config.session_memory.save_selected_commands
+        {
+            turn.selected_command = Some(selected.command.clone());
+            turn.selected_command_rationale = selected.rationale.clone();
+            turn.confirmation_required = command_requires_confirmation(selected, &config.safety);
+            turn.execution = Some(SessionExecution {
+                executed: false,
+                exit_status: None,
+                stdout: None,
+                stderr: None,
+            });
+            record.push_turn(turn.clone());
+            session_store.save(record)?;
+        }
         if cli.benchmark && show_output {
             print_benchmark_report(
                 &output,
@@ -287,6 +411,9 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 
     if command_requires_confirmation(selected, &config.safety) {
+        if let Some(turn) = session_turn.as_mut() {
+            turn.confirmation_required = true;
+        }
         let approved = Confirm::new()
             .with_prompt(format!(
                 "{}\n{}",
@@ -313,7 +440,28 @@ pub fn run(cli: Cli) -> Result<()> {
         }
     }
 
-    let execution_elapsed = shell::execute(&selected.command, &config.execution)?;
+    let execution_result = shell::execute(
+        &selected.command,
+        &config.execution,
+        session_store.should_capture_command_output(),
+        config.session_memory.max_output_bytes,
+    )?;
+    let execution_elapsed = execution_result.duration;
+
+    if let (Some(record), Some(turn)) = (session_record.as_mut(), session_turn.as_mut())
+        && config.session_memory.save_selected_commands
+    {
+        turn.selected_command = Some(selected.command.clone());
+        turn.selected_command_rationale = selected.rationale.clone();
+        turn.execution = Some(SessionExecution {
+            executed: true,
+            exit_status: execution_result.exit_status,
+            stdout: execution_result.stdout,
+            stderr: execution_result.stderr,
+        });
+        record.push_turn(turn.clone());
+        session_store.save(record)?;
+    }
 
     if cli.benchmark && show_output {
         print_benchmark_report(
@@ -323,6 +471,80 @@ pub fn run(cli: Cli) -> Result<()> {
             Some(execution_elapsed),
             total_start.elapsed(),
         );
+    }
+
+    Ok(())
+}
+
+fn handle_session_command(
+    cli: &Cli,
+    session_requested: bool,
+    session_name: Option<&str>,
+    session_store: &SessionStore,
+    show_output: bool,
+    output: &OutputStyler,
+) -> Result<()> {
+    if !session_requested {
+        bail!(
+            "session memory is disabled for this invocation; remove --no-session or enable [session_memory].enabled"
+        )
+    }
+
+    if cli.session_show && cli.session_clear {
+        bail!("--session-show and --session-clear cannot be used together")
+    }
+
+    if cli.session_list {
+        let entries = session_store.list()?;
+        if show_output {
+            if entries.is_empty() {
+                println!("{}", output.dim("No stored sessions."));
+            } else {
+                for entry in entries {
+                    println!("{} {}", output.key("Session:"), output.accent(&entry.name));
+                    println!("{} {}", output.dim("scoped_name:"), entry.scoped_name);
+                    println!("{} {}", output.dim("scope:"), entry.scope.as_str());
+                    println!("{} {}", output.dim("turns:"), entry.turns);
+                    println!("{} {}", output.dim("path:"), entry.path.display());
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    if cli.session_show {
+        let record = session_store.load(session_name)?;
+        if show_output {
+            println!("{} {}", output.key("Session:"), output.accent(&record.name));
+            println!("{} {}", output.key("Turns:"), record.turns.len());
+            println!("{} {}", output.key("Scope:"), record.scope.as_str());
+            if record.turns.is_empty() {
+                println!("{}", output.dim("No stored turns."));
+            } else {
+                for (index, turn) in record.turns.iter().enumerate() {
+                    println!("{} {}", output.key("Turn"), index + 1);
+                    println!("{} {}", output.dim("request:"), turn.request);
+                    if let Some(selected_command) = turn.selected_command.as_deref() {
+                        println!("{} {}", output.dim("selected_command:"), selected_command);
+                    }
+                    if let Some(text_response) = turn.text_response.as_deref() {
+                        println!("{} {}", output.dim("text_response:"), text_response);
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    if cli.session_clear {
+        let removed = session_store.clear(session_name)?;
+        if show_output {
+            if removed {
+                println!("{}", output.ok("Session cleared."));
+            } else {
+                println!("{}", output.warn("Session did not exist."));
+            }
+        }
     }
 
     Ok(())
@@ -353,8 +575,9 @@ fn run_check(
     match planner.check_service(verbose, output) {
         Ok(status) if status.model_available => {
             if show_output {
+                let version = status.version.as_deref().unwrap_or("unknown version");
                 println!(
-                    "{} {} ({}; model `{}` available)",
+                    "{} {} ({}; model `{}` available; Ollama {version})",
                     output.key("ollama:"),
                     output.ok("ok"),
                     config.ollama.base_url,
@@ -578,6 +801,7 @@ fn run_models_benchmark(
                 &config.safety.destructive_substrings,
                 preferred_editor.as_deref(),
                 &resolved_environment,
+                None,
                 verbose,
                 output,
             );
@@ -590,6 +814,7 @@ fn run_models_benchmark(
                         query,
                         preferred_editor.as_deref(),
                         &resolved_environment,
+                        None,
                         verbose,
                         output,
                     );
@@ -1379,7 +1604,7 @@ mod tests {
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
-        SafetyConfig, UiConfig,
+        SafetyConfig, SessionMemoryConfig, UiConfig,
     };
     use crate::planner::{CommandPlan, PlannedCommand};
 
@@ -1538,6 +1763,7 @@ mod tests {
                 base_url: "http://127.0.0.1:11434".into(),
                 model: "default-model".into(),
                 temperature: 0.0,
+                use_chat_api: true,
                 system_prompt: "Return JSON only".into(),
             },
             environment: EnvironmentConfig::default(),
@@ -1556,6 +1782,7 @@ mod tests {
                 shell_arg: "-c".into(),
                 preferred_editor: Some("nvim".into()),
             },
+            session_memory: SessionMemoryConfig::default(),
             models_benchmark: ModelsBenchmarkConfig::default(),
         }
     }

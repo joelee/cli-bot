@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../cli-bot.toml");
 
@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub safety: SafetyConfig,
     pub ui: UiConfig,
     pub execution: ExecutionConfig,
+    #[serde(default)]
+    pub session_memory: SessionMemoryConfig,
     #[serde(default)]
     pub models_benchmark: ModelsBenchmarkConfig,
 }
@@ -109,6 +111,8 @@ pub struct OllamaConfig {
     pub model: String,
     pub temperature: f32,
     pub system_prompt: String,
+    #[serde(default)]
+    pub use_chat_api: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,6 +160,108 @@ pub struct ExecutionConfig {
     pub shell_arg: String,
     #[serde(default)]
     pub preferred_editor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionMemoryConfig {
+    #[serde(default = "default_session_memory_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_session_memory_default_name")]
+    pub default_name: String,
+    #[serde(default)]
+    pub scope: SessionScope,
+    #[serde(default = "default_session_memory_storage_dir")]
+    pub storage_dir: String,
+    #[serde(default = "default_session_memory_max_turns")]
+    pub max_turns: usize,
+    #[serde(default = "default_session_memory_include_working_directory")]
+    pub include_working_directory: bool,
+    #[serde(default = "default_session_memory_save_text_responses")]
+    pub save_text_responses: bool,
+    #[serde(default = "default_session_memory_save_selected_commands")]
+    pub save_selected_commands: bool,
+    #[serde(default)]
+    pub capture_command_output: bool,
+    #[serde(default)]
+    pub include_command_output_in_prompt: bool,
+    #[serde(default = "default_session_memory_max_output_bytes")]
+    pub max_output_bytes: usize,
+    #[serde(default)]
+    pub retention_days: Option<u64>,
+}
+
+impl Default for SessionMemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_session_memory_enabled(),
+            default_name: default_session_memory_default_name(),
+            scope: SessionScope::default(),
+            storage_dir: default_session_memory_storage_dir(),
+            max_turns: default_session_memory_max_turns(),
+            include_working_directory: default_session_memory_include_working_directory(),
+            save_text_responses: default_session_memory_save_text_responses(),
+            save_selected_commands: default_session_memory_save_selected_commands(),
+            capture_command_output: false,
+            include_command_output_in_prompt: false,
+            max_output_bytes: default_session_memory_max_output_bytes(),
+            retention_days: None,
+        }
+    }
+}
+
+impl SessionMemoryConfig {
+    pub fn effective_max_turns(&self) -> usize {
+        self.max_turns.max(1)
+    }
+}
+
+fn default_session_memory_enabled() -> bool {
+    true
+}
+
+fn default_session_memory_default_name() -> String {
+    "default".to_string()
+}
+
+fn default_session_memory_storage_dir() -> String {
+    "auto".to_string()
+}
+
+fn default_session_memory_max_turns() -> usize {
+    6
+}
+
+fn default_session_memory_include_working_directory() -> bool {
+    true
+}
+
+fn default_session_memory_save_text_responses() -> bool {
+    true
+}
+
+fn default_session_memory_save_selected_commands() -> bool {
+    true
+}
+
+fn default_session_memory_max_output_bytes() -> usize {
+    8192
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionScope {
+    Global,
+    #[default]
+    WorkingDirectory,
+}
+
+impl SessionScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionScope::Global => "global",
+            SessionScope::WorkingDirectory => "working_directory",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -251,9 +357,9 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::{
-        AppConfig, ExecutionConfig, ModelsBenchmarkConfig, default_config_paths_for_home,
-        is_known_editor_in_path, resolve_config_path, resolve_config_path_for_home,
-        resolve_preferred_editor,
+        AppConfig, ExecutionConfig, ModelsBenchmarkConfig, SessionMemoryConfig, SessionScope,
+        default_config_paths_for_home, is_known_editor_in_path, resolve_config_path,
+        resolve_config_path_for_home, resolve_preferred_editor,
     };
 
     #[test]
@@ -265,6 +371,7 @@ base_url = "http://127.0.0.1:11434"
 model = "lfm2:latest"
 temperature = 0.0
 system_prompt = "Return JSON only"
+use_chat_api = true
 
 [environment]
 os = "auto"
@@ -286,6 +393,20 @@ shell = "/bin/sh"
 shell_arg = "-c"
 preferred_editor = "nvim"
 
+[session_memory]
+enabled = true
+default_name = "workspace"
+scope = "working_directory"
+storage_dir = "auto"
+max_turns = 8
+include_working_directory = true
+save_text_responses = true
+save_selected_commands = true
+capture_command_output = true
+include_command_output_in_prompt = false
+max_output_bytes = 4096
+retention_days = 14
+
 [models_benchmark]
 models = ["lfm2:latest", "qwen3.5:latest"]
 queries = ["Ping google five times", "Install btop"]
@@ -294,6 +415,7 @@ queries = ["Ping google five times", "Install btop"]
         .expect("config should parse");
 
         assert_eq!(config.ollama.model, "lfm2:latest");
+        assert!(config.ollama.use_chat_api);
         assert_eq!(config.environment.os, "auto");
         assert_eq!(config.environment.distro, "auto");
         assert_eq!(config.environment.preferred_package_manager, "auto");
@@ -301,6 +423,12 @@ queries = ["Ping google five times", "Install btop"]
         assert_eq!(config.execution.shell_arg, "-c");
         assert_eq!(config.execution.preferred_editor.as_deref(), Some("nvim"));
         assert!(!config.ui.auto_select_recommended);
+        assert!(config.session_memory.enabled);
+        assert_eq!(config.session_memory.default_name, "workspace");
+        assert_eq!(config.session_memory.scope, SessionScope::WorkingDirectory);
+        assert!(config.session_memory.capture_command_output);
+        assert_eq!(config.session_memory.max_output_bytes, 4096);
+        assert_eq!(config.session_memory.retention_days, Some(14));
         assert_eq!(
             config.models_benchmark.models,
             vec!["lfm2:latest", "qwen3.5:latest"]
@@ -342,8 +470,21 @@ preferred_editor = "nvim"
         assert_eq!(config.environment.os, "auto");
         assert_eq!(config.environment.distro, "auto");
         assert_eq!(config.environment.preferred_package_manager, "auto");
+        assert_eq!(config.session_memory, SessionMemoryConfig::default());
         assert!(config.models_benchmark.models.is_empty());
         assert!(config.models_benchmark.queries.is_empty());
+    }
+
+    #[test]
+    fn session_memory_defaults_are_bounded() {
+        let config = SessionMemoryConfig::default();
+
+        assert!(config.enabled);
+        assert_eq!(config.default_name, "default");
+        assert_eq!(config.scope, SessionScope::WorkingDirectory);
+        assert_eq!(config.effective_max_turns(), 6);
+        assert_eq!(config.max_output_bytes, 8192);
+        assert_eq!(config.retention_days, None);
     }
 
     #[test]

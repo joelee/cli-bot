@@ -30,6 +30,52 @@ If you run `cli-bot` without a request string, it prompts you to type one intera
 cli-bot
 ```
 
+## Session Memory
+
+Session memory is enabled by default in `0.3.0`.
+
+By default, `cli-bot` uses the configured `session_memory.default_name` and scopes it to the current working directory, so the same session name does not leak across unrelated folders.
+
+```bash
+cli-bot "find my git config file"
+cli-bot "open it in nvim"
+```
+
+Use an explicit session name when you want to keep a separate thread of follow-up requests:
+
+```bash
+cli-bot --session release "find the changelog entry for 0.3.0"
+cli-bot --session release "open it again"
+```
+
+Inspect the current session:
+
+```bash
+cli-bot --session release --session-show
+```
+
+Clear the current session:
+
+```bash
+cli-bot --session release --session-clear
+```
+
+List all stored sessions:
+
+```bash
+cli-bot --session-list
+```
+
+Disable session memory for one invocation:
+
+```bash
+cli-bot --no-session "Ping google five times"
+```
+
+When `session_memory.capture_command_output = true`, command stdout and stderr are stored separately as command output. They are not included in later prompts unless `session_memory.include_command_output_in_prompt = true`.
+
+If `session_memory.retention_days` is set, old session files are pruned automatically on startup.
+
 ## Dry Run
 
 ```bash
@@ -125,6 +171,27 @@ cli-bot --model lfm2:latest --benchmark --dry-run "Ping google five times"
 
 `--model` overrides `ollama.model` from the config file for that single invocation. It also affects `--check`.
 
+## Session Flags
+
+```bash
+cli-bot --session work "open it again"
+```
+
+- `--session [name]`: use the configured default session or the named session
+- `--session-list`: list stored sessions and exit
+- `--session-show`: print stored turns for the active session and exit
+- `--session-clear`: clear the active session and exit
+- `--no-session`: disable session memory for the current invocation
+
+## Ollama Backend
+
+`cli-bot` now supports both Ollama request styles:
+
+- `/api/chat` when `ollama.use_chat_api = true`
+- `/api/generate` when `ollama.use_chat_api = false`
+
+The planner contract stays the same in both modes.
+
 ## LLM Best Choice
 
 ```bash
@@ -145,7 +212,8 @@ cli-bot --model lfm2.5-thinking:latest --verbose --benchmark "Ping google five t
 - resolved config path, model, and preferred editor
 - whether the planner marked the request as unresolved before the text fallback
 - the natural-language request
-- the full Ollama generate request body
+- the rendered session context when available
+- the full Ollama request body
 - the full raw Ollama HTTP response body
 - the generated text extracted from the Ollama response
 - the extracted planner JSON before deserialization
@@ -191,6 +259,8 @@ cli-bot "Edit my git config file"
 - If the planner returns one command, `cli-bot` selects it automatically.
 - If the planner returns multiple commands, `cli-bot` presents an interactive selector unless `--auto-select-best` or `ui.auto_select_recommended = true` is enabled.
 - If no request string is provided, `cli-bot` prompts for one interactively.
+- Session memory is enabled by default unless `session_memory.enabled = false` or `--no-session` is used.
+- The default `working_directory` session scope keeps follow-up memory local to the current folder.
 - If the planner marks a request as unresolved, `cli-bot` makes a second LLM request for a plain text response instead of guessing a command.
 - Package-related requests use the resolved environment and effective package manager.
 - The LLM is required to return `potentially_destructive: true | false` for each command.

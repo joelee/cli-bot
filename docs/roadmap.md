@@ -2,12 +2,16 @@
 
 This document tracks future features that may be added after the current release scope.
 
-## Candidate Features
+## Recently Shipped
 
 ### Multi-turn Session Memory
 
-- Keep short conversational context across follow-up requests in the same CLI session
-- Help the planner interpret references like "now install it" or "show the config file again"
+- Shipped in `0.3.0`
+- Keeps short conversational context across follow-up requests in the same local session
+- Uses working-directory-scoped sessions by default to avoid cross-project leakage
+- See [Session Memory](session-memory.md) for the current behavior and future follow-up ideas
+
+## Candidate Features
 
 ### External Dictionary And Language Tools
 

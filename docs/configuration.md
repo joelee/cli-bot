@@ -22,6 +22,7 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 - `base_url`: Ollama server URL
 - `model`: default model name to query; can be overridden at runtime with `--model`
 - `temperature`: generation temperature
+- `use_chat_api`: use Ollama's role-based `/api/chat` endpoint instead of `/api/generate`
 - `system_prompt`: base system instruction for the planner
 
 ### `[environment]`
@@ -48,6 +49,21 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 - `shell_arg`: shell flag used to pass a command string
 - `preferred_editor`: preferred editor for edit-style requests; falls back to `$EDITOR` when unset
 
+### `[session_memory]`
+
+- `enabled`: enable session memory by default; can be disabled per invocation with `--no-session`
+- `default_name`: default session name used when `--session` is omitted
+- `scope`: `working_directory` or `global`; `working_directory` keeps the same session name isolated per folder
+- `storage_dir`: local state directory; use `auto` for the platform default
+- `max_turns`: number of recent turns kept in prompt context and on disk
+- `include_working_directory`: record the cwd for each turn
+- `save_text_responses`: persist unresolved text fallback responses
+- `save_selected_commands`: persist selected commands and command choices
+- `capture_command_output`: capture and store command stdout/stderr after execution
+- `include_command_output_in_prompt`: include captured stdout/stderr in later LLM prompts
+- `max_output_bytes`: truncate stored and prompt-included command output to this many bytes
+- `retention_days`: automatically prune session files older than this many days; unset disables pruning
+
 ### `[models_benchmark]`
 
 - `models`: list of Ollama model names to benchmark
@@ -60,6 +76,7 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 base_url = "http://127.0.0.1:11434"
 model = "lfm2:latest"
 temperature = 0.0
+use_chat_api = true
 system_prompt = "Return JSON only"
 
 [environment]
@@ -81,6 +98,20 @@ auto_select_recommended = false
 shell = "/bin/sh"
 shell_arg = "-c"
 preferred_editor = "nvim"
+
+[session_memory]
+enabled = true
+default_name = "default"
+scope = "working_directory"
+storage_dir = "auto"
+max_turns = 6
+include_working_directory = true
+save_text_responses = true
+save_selected_commands = true
+capture_command_output = false
+include_command_output_in_prompt = false
+max_output_bytes = 8192
+retention_days = 14
 
 [models_benchmark]
 models = ["lfm2:latest", "qwen3.5:latest", "gemma4:latest"]

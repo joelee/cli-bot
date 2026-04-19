@@ -2,6 +2,7 @@
 base_url = "http://127.0.0.1:11434"
 model = "lfm2:latest"
 temperature = 0.0
+use_chat_api = true
 system_prompt = """
 You translate natural-language requests into safe shell commands.
 Return valid JSON only.
@@ -48,6 +49,20 @@ auto_select_recommended = false
 shell = "/bin/sh"
 shell_arg = "-c"
 preferred_editor = "nvim"
+
+[session_memory]
+enabled = true
+default_name = "default"
+scope = "working_directory"
+storage_dir = "auto"
+max_turns = 6
+include_working_directory = true
+save_text_responses = true
+save_selected_commands = true
+capture_command_output = false
+include_command_output_in_prompt = false
+max_output_bytes = 8192
+retention_days = 14
 
 [models_benchmark]
 models = [

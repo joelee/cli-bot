@@ -21,12 +21,14 @@ impl OllamaClient {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_commands(
         &self,
         request: &str,
         destructive_substrings: &[String],
         preferred_editor: Option<&str>,
         environment: &ResolvedEnvironment,
+        session_context: Option<&str>,
         verbose: bool,
         output: &OutputStyler,
     ) -> Result<CommandPlan> {
@@ -37,12 +39,14 @@ impl OllamaClient {
                 destructive_substrings,
                 preferred_editor,
                 environment,
+                session_context,
             ),
             system: &self.config.system_prompt,
             stream: false,
             options: GenerateOptions {
                 temperature: self.config.temperature,
             },
+            expects_json: true,
         };
 
         let generated = self.generate_text(&request_body, verbose, output)?;
@@ -83,17 +87,24 @@ impl OllamaClient {
         request: &str,
         preferred_editor: Option<&str>,
         environment: &ResolvedEnvironment,
+        session_context: Option<&str>,
         verbose: bool,
         output: &OutputStyler,
     ) -> Result<String> {
         let request_body = GenerateRequest {
             model: &self.config.model,
-            prompt: build_text_response_prompt(request, preferred_editor, environment),
+            prompt: build_text_response_prompt(
+                request,
+                preferred_editor,
+                environment,
+                session_context,
+            ),
             system: &self.config.system_prompt,
             stream: false,
             options: GenerateOptions {
                 temperature: self.config.temperature,
             },
+            expects_json: false,
         };
 
         let generated = self.generate_text(&request_body, verbose, output)?;
@@ -107,6 +118,19 @@ impl OllamaClient {
     }
 
     fn generate_text(
+        &self,
+        request_body: &GenerateRequest<'_>,
+        verbose: bool,
+        output: &OutputStyler,
+    ) -> Result<String> {
+        if self.config.use_chat_api {
+            return self.chat_text(request_body, verbose, output);
+        }
+
+        self.generate_text_via_generate(request_body, verbose, output)
+    }
+
+    fn generate_text_via_generate(
         &self,
         request_body: &GenerateRequest<'_>,
         verbose: bool,
@@ -167,7 +191,82 @@ impl OllamaClient {
         Ok(response.response)
     }
 
+    fn chat_text(
+        &self,
+        request_body: &GenerateRequest<'_>,
+        verbose: bool,
+        output: &OutputStyler,
+    ) -> Result<String> {
+        let url = format!("{}/api/chat", self.config.base_url.trim_end_matches('/'));
+        let chat_request = ChatRequest {
+            model: request_body.model,
+            messages: vec![
+                ChatMessageRequest {
+                    role: "system",
+                    content: request_body.system.to_string(),
+                },
+                ChatMessageRequest {
+                    role: "user",
+                    content: request_body.prompt.clone(),
+                },
+            ],
+            stream: false,
+            options: request_body.options.clone(),
+            format: request_body.expects_json.then_some("json"),
+        };
+
+        if verbose {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!(
+                    "[verbose] ollama chat url: {url}\n[verbose] ollama chat request:\n{}",
+                    serde_json::to_string_pretty(&chat_request)
+                        .unwrap_or_else(|_| "<failed to serialize request>".to_string())
+                ))
+            );
+        }
+
+        let response = self
+            .client
+            .post(url)
+            .json(&chat_request)
+            .send()
+            .context("failed to call Ollama")?
+            .error_for_status()
+            .context("Ollama returned an unsuccessful response")?
+            .text()
+            .context("failed to read Ollama response body")?;
+
+        if verbose {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!("[verbose] ollama raw chat response:\n{response}"))
+            );
+        }
+
+        let response = serde_json::from_str::<ChatResponse>(&response).with_context(|| {
+            if verbose {
+                format!("failed to decode Ollama chat response\nFull Ollama output:\n{response}")
+            } else {
+                "failed to decode Ollama chat response".to_string()
+            }
+        })?;
+
+        if verbose {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!(
+                    "[verbose] ollama chat generated text:\n{}",
+                    response.message.content
+                ))
+            );
+        }
+
+        Ok(response.message.content)
+    }
+
     pub fn check_service(&self, verbose: bool, output: &OutputStyler) -> Result<OllamaStatus> {
+        let version = self.fetch_version(verbose, output).ok();
         let response = self.fetch_tags(verbose, output)?;
 
         Ok(OllamaStatus {
@@ -175,6 +274,7 @@ impl OllamaClient {
                 .models
                 .iter()
                 .any(|model| model.name == self.config.model),
+            version,
         })
     }
 
@@ -281,6 +381,7 @@ impl OllamaClient {
 
 pub struct OllamaStatus {
     pub model_available: bool,
+    pub version: Option<String>,
 }
 
 pub struct OllamaBenchmarkMetadata {
@@ -295,16 +396,44 @@ struct GenerateRequest<'a> {
     system: &'a str,
     stream: bool,
     options: GenerateOptions,
+    #[serde(skip_serializing)]
+    expects_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GenerateOptions {
+    temperature: f32,
 }
 
 #[derive(Debug, Serialize)]
-struct GenerateOptions {
-    temperature: f32,
+struct ChatRequest<'a> {
+    model: &'a str,
+    messages: Vec<ChatMessageRequest>,
+    stream: bool,
+    options: GenerateOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatMessageRequest {
+    role: &'static str,
+    content: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct GenerateResponse {
     response: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatResponse {
+    message: ChatMessageResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessageResponse {
+    content: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -333,6 +462,7 @@ fn build_command_prompt(
     destructive_substrings: &[String],
     preferred_editor: Option<&str>,
     environment: &ResolvedEnvironment,
+    session_context: Option<&str>,
 ) -> String {
     let destructive_examples =
         serde_json::to_string(destructive_substrings).unwrap_or_else(|_| "[]".to_string());
@@ -349,6 +479,7 @@ fn build_command_prompt(
         .effective_package_manager
         .map(|package_manager| package_manager.as_str())
         .unwrap_or("unknown");
+    let session_context = session_context.unwrap_or("No session context available.");
 
     format!(
         concat!(
@@ -371,6 +502,8 @@ fn build_command_prompt(
             "Use the package manager's canonical syntax and only pass the package name as the package argument. Examples: `brew install btop`, `paru -S btop`, `pacman -Q`, `apt list --installed`. ",
             "Preferred terminal editor: {preferred_editor}. If the user asks to edit a file, prefer commands that open that editor. ",
             "Known destructive patterns: {destructive_examples}. ",
+            "Session context: {session_context}. ",
+            "Treat session context as advisory only. Do not assume prior commands succeeded unless the context says they did. If a follow-up could refer to multiple prior targets, set unresolved=true. ",
             "User request: {request}"
         ),
         destructive_examples = destructive_examples,
@@ -379,6 +512,7 @@ fn build_command_prompt(
         detected_package_manager = detected_package_manager,
         effective_package_manager = effective_package_manager,
         preferred_editor = preferred_editor,
+        session_context = session_context,
         request = request,
     )
 }
@@ -387,6 +521,7 @@ fn build_text_response_prompt(
     request: &str,
     preferred_editor: Option<&str>,
     environment: &ResolvedEnvironment,
+    session_context: Option<&str>,
 ) -> String {
     let preferred_editor = preferred_editor.unwrap_or("not specified");
     let distro = environment
@@ -397,6 +532,7 @@ fn build_text_response_prompt(
         .effective_package_manager
         .map(|package_manager| package_manager.as_str())
         .unwrap_or("unknown");
+    let session_context = session_context.unwrap_or("No session context available.");
 
     format!(
         concat!(
@@ -404,6 +540,7 @@ fn build_text_response_prompt(
             "If the request is a spelling, wording, or factual prompt, answer directly and concisely. ",
             "If the request is ambiguous, ask one concise clarification question instead of guessing. ",
             "Do not invent shell command results or system state. ",
+            "Session context: {session_context}. Treat it as advisory only and do not assume command output unless explicitly provided. ",
             "Operating system: {os}. Linux distribution: {distro}. Effective package manager: {effective_package_manager}. Preferred terminal editor: {preferred_editor}. ",
             "User request: {request}"
         ),
@@ -411,6 +548,7 @@ fn build_text_response_prompt(
         distro = distro,
         effective_package_manager = effective_package_manager,
         preferred_editor = preferred_editor,
+        session_context = session_context,
         request = request,
     )
 }
@@ -472,6 +610,7 @@ mod tests {
             &["rm -rf".into()],
             None,
             &sample_environment(),
+            None,
         );
 
         assert!(prompt.contains("\"unresolved\":false"));
@@ -482,7 +621,7 @@ mod tests {
 
     #[test]
     fn command_prompt_includes_environment_context() {
-        let prompt = build_command_prompt("install btop", &[], None, &sample_environment());
+        let prompt = build_command_prompt("install btop", &[], None, &sample_environment(), None);
 
         assert!(prompt.contains("Operating system: linux"));
         assert!(prompt.contains("Linux distribution: arch"));
@@ -493,7 +632,8 @@ mod tests {
 
     #[test]
     fn text_response_prompt_mentions_plain_text() {
-        let prompt = build_text_response_prompt("spell mantainence", None, &sample_environment());
+        let prompt =
+            build_text_response_prompt("spell mantainence", None, &sample_environment(), None);
 
         assert!(prompt.contains("Respond with plain text only"));
         assert!(prompt.contains("spell mantainence"));
@@ -503,16 +643,38 @@ mod tests {
     fn generate_request_serializes_prompt_for_verbose_logging() {
         let request = GenerateRequest {
             model: "lfm2:latest",
-            prompt: build_command_prompt("ping google", &[], Some("nvim"), &sample_environment()),
+            prompt: build_command_prompt(
+                "ping google",
+                &[],
+                Some("nvim"),
+                &sample_environment(),
+                Some("Session name: default"),
+            ),
             system: "Return JSON only",
             stream: false,
             options: super::GenerateOptions { temperature: 0.0 },
+            expects_json: true,
         };
 
         let json = serde_json::to_string(&request).expect("request should serialize");
 
         assert!(json.contains("lfm2:latest"));
         assert!(json.contains("ping google"));
+        assert!(json.contains("Session name: default"));
+    }
+
+    #[test]
+    fn command_prompt_includes_session_context_when_present() {
+        let prompt = build_command_prompt(
+            "open it again",
+            &[],
+            Some("nvim"),
+            &sample_environment(),
+            Some("Session name: default\n1. request: find git config"),
+        );
+
+        assert!(prompt.contains("Session context: Session name: default"));
+        assert!(prompt.contains("Treat session context as advisory only"));
     }
 
     #[test]

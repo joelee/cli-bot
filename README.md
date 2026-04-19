@@ -1,5 +1,9 @@
 # cli-bot
 
+[![Release Checks](https://github.com/joelee/cli-bot/actions/workflows/release-checks.yml/badge.svg)](https://github.com/joelee/cli-bot/actions/workflows/release-checks.yml)
+[![Unit Coverage](https://github.com/joelee/cli-bot/actions/workflows/unit-coverage.yml/badge.svg)](https://github.com/joelee/cli-bot/actions/workflows/unit-coverage.yml)
+[![Codecov](https://codecov.io/gh/joelee/cli-bot/graph/badge.svg)](https://codecov.io/gh/joelee/cli-bot)
+
 `cli-bot` is a Rust CLI that turns natural-language requests into shell commands using Ollama, with awareness of the user's OS, Linux distro, and package manager. Shell command generation remains the priority, with a text-response fallback only when the planner marks a request as unresolved.
 
 Instead of remembering exact flags, command variants, and editor invocations, you can describe what you want in plain English and let `cli-bot` translate that intent into a shell command you can inspect, benchmark, approve, and run.
@@ -35,6 +39,8 @@ See [Install Ollama](docs/install-ollama.md) and [Configuration](docs/configurat
 
 If you encounter any issues, run `cli-bot --check` to identify the issues. 
 
+If you want the published coverage site to work, enable GitHub Pages with `GitHub Actions` as the source in the repository settings.
+
 ## Why This Exists
 
 Terminal users often know what they want to do, but not always the exact command shape.
@@ -46,6 +52,36 @@ Examples:
 - You want a local LLM-assisted shell helper without sending requests to a hosted service.
 
 `cli-bot` is built for that gap between intent and syntax.
+
+The repository also includes dedicated coverage automation:
+
+- a unit-coverage workflow that uploads HTML and LCOV artifacts
+- Codecov upload from the coverage workflow
+- GitHub Pages publishing for the HTML coverage site at `https://joelee.github.io/cli-bot/`
+
+See [Testing](docs/testing.md) for the local script and CI details.
+
+## Session Memory
+
+`cli-bot` now keeps short local follow-up context by default through session memory.
+
+- the default session name comes from `session_memory.default_name`
+- the default scope is `working_directory`, so the same session name stays isolated per folder
+- you can choose a different thread with `--session <name>`
+- you can list local sessions with `--session-list`
+- you can inspect or clear it with `--session-show` and `--session-clear`
+- you can disable it for one command with `--no-session`
+
+Example:
+
+```bash
+cli-bot "find my git config file"
+cli-bot "open it in nvim"
+cli-bot --session-list
+cli-bot --session-show
+```
+
+Session memory stores structured request history locally. Command stdout and stderr can also be captured through config, but they stay out of later prompts unless you explicitly enable prompt inclusion. Old session files can also be pruned automatically with `session_memory.retention_days`.
 
 ## Who This Is For
 
@@ -492,6 +528,7 @@ If `NO_COLOR` is set, color output is disabled.
 - [Publishing](docs/publishing.md)
 - [Architecture](docs/architecture.md)
 - [Configuration](docs/configuration.md)
+- [Session Memory Design](docs/session-memory.md)
 - [Usage](docs/usage.md)
 - [Testing](docs/testing.md)
 - [Roadmap](docs/roadmap.md)
