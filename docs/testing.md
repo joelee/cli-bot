@@ -89,7 +89,7 @@ The repository now includes a dedicated GitHub Actions workflow at `.github/work
 It:
 
 - installs Rust with `llvm-tools-preview`
-- installs `cargo2junit` for JUnit XML export
+- installs `cargo-nextest` for stable JUnit XML export
 - runs `bash ./scripts/coverage-unit.sh`
 - uploads the HTML coverage output as a workflow artifact
 - uploads `target/coverage/lcov.info` to Codecov
