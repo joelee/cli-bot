@@ -42,7 +42,7 @@ jobs:
         if: always()
         run: |
           mkdir -p target/test-results
-          cargo nextest run --lib --junit-report target/test-results/unit-tests.xml
+          cargo nextest run --lib
 
       - name: Upload unit coverage artifact
         if: always()
