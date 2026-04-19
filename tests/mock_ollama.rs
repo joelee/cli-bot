@@ -120,7 +120,7 @@ fn check_hits_ollama_version_and_tags_endpoints() {
         ],
     );
 
-    let config_path = write_config(server.base_url(), true, true, None, None, false);
+    let config_path = write_config(server.base_url(), true, false, None, None, false);
     let mut cli = sample_cli(config_path, vec![]);
     cli.check = true;
 
@@ -255,7 +255,7 @@ fn write_config(
     let temp_dir = unique_temp_dir("cli-bot-integration-test");
     fs::create_dir_all(&temp_dir).expect("temp dir should exist");
     let config_path = temp_dir.join("cli-bot.toml");
-    let preferred_editor = if require_editor { "nvim" } else { "sh" };
+    let preferred_editor = if require_editor { "nvim" } else { "/bin/sh" };
     let storage_dir = storage_dir
         .as_deref()
         .map(path_to_string)
