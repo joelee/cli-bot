@@ -22,16 +22,30 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Keep the version in step with rust-toolchain.toml.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          components: llvm-tools-preview
+          toolchain: 1.98.1
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Install just and cargo tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov,cargo-nextest
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Run unit coverage
-        run: bash ./scripts/coverage-unit.sh
+      - name: Write LCOV coverage report
+        run: just coverage-lcov
+
+      - name: Write HTML coverage report
+        run: just coverage-html
+
+      - name: Run tests with JUnit output
+        if: always()
+        run: just test-junit
 
       - name: Upload unit coverage artifact
         if: always()
@@ -39,10 +53,9 @@ jobs:
         with:
           name: cli-bot-unit-coverage-html
           path: |
-            target/coverage/html/**
-            target/coverage/unit-report.txt
-            target/coverage/unit-tests.profdata
+            target/llvm-cov/html/**
             target/coverage/lcov.info
+            target/test-results/unit-tests.xml
           if-no-files-found: warn
 
       - name: Upload coverage to Codecov
@@ -53,3 +66,10 @@ jobs:
           fail_ci_if_error: false
           use_oidc: true
           verbose: true
+
+      - name: Upload test results to Codecov
+        if: always()
+        uses: codecov/test-results-action@v1
+        with:
+          files: target/test-results/unit-tests.xml
+          fail_ci_if_error: false

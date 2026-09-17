@@ -30,9 +30,40 @@ If you run `cli-bot` without a request string, it prompts you to type one intera
 cli-bot
 ```
 
+## Interactive Mode
+
+Use `--interactive` or `-i` to keep prompting for new requests until you press `Ctrl-C` or type `/quit`.
+
+```bash
+cli-bot -i
+```
+
+You can also start interactive mode with an initial request:
+
+```bash
+cli-bot --interactive "find my git config file"
+```
+
+In this mode, `cli-bot` runs each request, prints the result, and then prompts again instead of exiting after one response.
+
+When interactive mode starts, `cli-bot` prints a short exit hint telling you to use `/quit` or `Ctrl-C`.
+
+The interactive prompt is shown as cyan `cli-bot` with a gray `>` suffix. If the previous command exits with an error, `cli-bot` prints a red `Error:` line and the next prompt shows `cli-bot` in red.
+
+Session memory continues to work in interactive mode, so follow-up requests can still use the active session context.
+
+Example with an explicit session:
+
+```bash
+cli-bot -i --session release
+cli-bot> find the changelog entry for 0.3.1
+cli-bot> open it in nvim
+cli-bot> /quit
+```
+
 ## Session Memory
 
-Session memory is enabled by default in `0.3.0`.
+Session memory is enabled by default in `0.3.1`.
 
 By default, `cli-bot` uses the configured `session_memory.default_name` and scopes it to the current working directory, so the same session name does not leak across unrelated folders.
 
@@ -44,7 +75,7 @@ cli-bot "open it in nvim"
 Use an explicit session name when you want to keep a separate thread of follow-up requests:
 
 ```bash
-cli-bot --session release "find the changelog entry for 0.3.0"
+cli-bot --session release "find the changelog entry for 0.3.1"
 cli-bot --session release "open it again"
 ```
 

@@ -1,8 +1,11 @@
+# Enforces the same gates as CI (AGENTS.md § Commands).
+# Install with: pre-commit install
 repos:
   - repo: local
     hooks:
-      - id: cli-bot-verify
-        name: cli-bot verify
-        entry: ./scripts/verify.sh
+      - id: just-check
+        name: just check (fmt, clippy, scripts, tests, coverage, build, package)
+        entry: just check
         language: system
         pass_filenames: false
+        always_run: true

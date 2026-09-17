@@ -2,12 +2,15 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cli_bot::{Cli, ColorMode, run};
+
+static TEMP_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
 fn plans_commands_via_generate_endpoint() {
@@ -222,6 +225,567 @@ fn session_commands_list_show_and_prune() {
     run(show_cli).expect("session show should succeed");
 }
 
+const PRINTF_PLAN: &str = r#"{"summary":"Print ok","unresolved":false,"commands":[{"command":"printf ok","description":"Print ok","potentially_destructive":false,"recommended":true,"rationale":"Harmless"}]}"#;
+const UNRESOLVED_PLAN: &str = r#"{"summary":"Need clarification","unresolved":true,"commands":[]}"#;
+
+#[test]
+fn executes_command_and_saves_session_turn_with_captured_output() {
+    let storage_dir = unique_temp_dir("cli-bot-exec-session");
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server =
+        MockOllamaServer::start(capture.clone(), vec![MockResponse::generated(PRINTF_PLAN)]);
+    let config_path = ConfigOptions {
+        capture_command_output: true,
+        ..ConfigOptions::with_session(&storage_dir)
+    }
+    .write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["print", "ok"]);
+    cli.benchmark = true;
+    cli.print_plan = true;
+
+    run(cli).expect("harmless command should execute");
+
+    let session = read_default_session(&storage_dir);
+    let turn = &session["turns"][0];
+    assert_eq!(turn["request"], "print ok");
+    assert_eq!(turn["selected_command"], "printf ok");
+    assert_eq!(turn["confirmation_required"], false);
+    assert_eq!(turn["execution"]["executed"], true);
+    assert_eq!(turn["execution"]["exit_status"], 0);
+    assert_eq!(turn["execution"]["stdout"], "ok");
+}
+
+#[test]
+fn failed_command_returns_error_and_saves_no_turn() {
+    let storage_dir = unique_temp_dir("cli-bot-exec-failure");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated(
+            r#"{"unresolved":false,"commands":[{"command":"exit 3","description":"Fail","recommended":true}]}"#,
+        )],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+
+    let error = run(session_cli(config_path, vec!["fail"])).expect_err("exit 3 should fail");
+
+    assert!(error.to_string().contains("command exited with status"));
+    assert!(!storage_dir.join("sessions/default.json").exists());
+}
+
+#[test]
+fn dry_run_saves_turn_as_not_executed_and_flags_destructive_command() {
+    let storage_dir = unique_temp_dir("cli-bot-dry-run-session");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated(
+            r#"{"summary":"Delete build output","unresolved":false,"commands":[{"command":"rm -rf ./target","description":"Delete target","potentially_destructive":false,"recommended":true,"rationale":"Removes build output"}]}"#,
+        )],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["delete the build output"]);
+    cli.dry_run = true;
+    cli.benchmark = true;
+
+    run(cli).expect("dry run should succeed without executing");
+
+    let session = read_default_session(&storage_dir);
+    let turn = &session["turns"][0];
+    assert_eq!(turn["selected_command"], "rm -rf ./target");
+    assert_eq!(turn["confirmation_required"], true);
+    assert_eq!(turn["execution"]["executed"], false);
+    assert!(turn["execution"]["exit_status"].is_null());
+}
+
+#[test]
+fn unresolved_request_saves_text_response_in_session() {
+    let storage_dir = unique_temp_dir("cli-bot-unresolved-session");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            MockResponse::generated(UNRESOLVED_PLAN),
+            MockResponse::generated("maintenance"),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["spell mantainence"]);
+    cli.benchmark = true;
+    cli.verbose = true;
+
+    run(cli).expect("unresolved fallback should succeed");
+
+    let session = read_default_session(&storage_dir);
+    let turn = &session["turns"][0];
+    assert_eq!(turn["unresolved"], true);
+    assert_eq!(turn["text_response"], "maintenance");
+    assert!(turn["selected_command"].is_null());
+}
+
+#[test]
+fn follow_up_request_carries_previous_turn_as_session_context() {
+    let storage_dir = unique_temp_dir("cli-bot-follow-up-session");
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server = MockOllamaServer::start(
+        capture.clone(),
+        vec![
+            MockResponse::generated(PRINTF_PLAN),
+            MockResponse::generated(PRINTF_PLAN),
+        ],
+    );
+    let config_path = ConfigOptions {
+        capture_command_output: true,
+        include_command_output_in_prompt: true,
+        ..ConfigOptions::with_session(&storage_dir)
+    }
+    .write(server.base_url());
+
+    run(session_cli(config_path.clone(), vec!["print ok"])).expect("first request should run");
+    let mut follow_up = session_cli(config_path, vec!["do it again"]);
+    follow_up.verbose = true;
+    run(follow_up).expect("follow-up request should run");
+
+    let requests = capture.lock().expect("capture should lock");
+    assert_eq!(requests.len(), 2);
+    assert!(!requests[0].body.contains("selected_command: printf ok"));
+    assert!(requests[1].body.contains("1. request: print ok"));
+    assert!(requests[1].body.contains("selected_command: printf ok"));
+    assert!(requests[1].body.contains("executed with exit status 0"));
+    assert!(requests[1].body.contains("stdout: ok"));
+    assert_eq!(
+        read_default_session(&storage_dir)["turns"]
+            .as_array()
+            .expect("turns should be an array")
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn named_session_is_stored_separately_from_default() {
+    let storage_dir = unique_temp_dir("cli-bot-named-session");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated(PRINTF_PLAN)],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["print ok"]);
+    cli.session = Some("work".to_string());
+    cli.verbose = true;
+    cli.dry_run = true;
+
+    run(cli).expect("named session request should succeed");
+
+    assert!(storage_dir.join("sessions/work.json").is_file());
+    assert!(!storage_dir.join("sessions/default.json").exists());
+}
+
+#[test]
+fn auto_select_best_picks_recommended_command_from_several() {
+    let storage_dir = unique_temp_dir("cli-bot-auto-select");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated(
+            r#"{"summary":"Ping","unresolved":false,"commands":[{"command":"ping google.com","description":"Ping forever","recommended":false},{"command":"ping -c 5 google.com","description":"Ping five times","recommended":true,"rationale":"Bounded"}]}"#,
+        )],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["ping google"]);
+    cli.auto_select_best = true;
+    cli.dry_run = true;
+
+    run(cli).expect("auto selection should not need a terminal");
+
+    let session = read_default_session(&storage_dir);
+    let turn = &session["turns"][0];
+    assert_eq!(turn["selected_command"], "ping -c 5 google.com");
+    assert_eq!(turn["selected_command_rationale"], "Bounded");
+    assert_eq!(
+        turn["command_choices"]
+            .as_array()
+            .expect("choices should be an array")
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn auto_select_best_falls_back_to_first_command_without_recommendation() {
+    let storage_dir = unique_temp_dir("cli-bot-auto-select-first");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated(
+            r#"{"unresolved":false,"commands":["uname -a","uname -r"]}"#,
+        )],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["kernel"]);
+    cli.auto_select_best = true;
+    cli.dry_run = true;
+
+    run(cli).expect("auto selection should fall back to the first command");
+
+    assert_eq!(
+        read_default_session(&storage_dir)["turns"][0]["selected_command"],
+        "uname -a"
+    );
+}
+
+#[test]
+fn verbose_chat_request_succeeds_and_model_override_is_sent() {
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server = MockOllamaServer::start(capture.clone(), vec![MockResponse::chat(PRINTF_PLAN)]);
+    let config_path = ConfigOptions {
+        use_chat_api: true,
+        ..ConfigOptions::default()
+    }
+    .write(server.base_url());
+    let mut cli = sample_cli(config_path, vec!["print ok"]);
+    cli.quiet = false;
+    cli.verbose = true;
+    cli.model = Some(" other-model:latest ".to_string());
+
+    run(cli).expect("verbose chat request should succeed");
+
+    let requests = capture.lock().expect("capture should lock");
+    assert_eq!(requests[0].path, "/api/chat");
+    assert!(requests[0].body.contains(r#""model":"other-model:latest""#));
+}
+
+#[test]
+fn empty_model_override_is_rejected_before_any_request() {
+    let config_path = ConfigOptions::default().write("http://127.0.0.1:1");
+    let mut cli = sample_cli(config_path, vec!["print ok"]);
+    cli.model = Some("   ".to_string());
+
+    let error = run(cli).expect_err("blank model should be rejected");
+
+    assert!(error.to_string().contains("--model must not be empty"));
+}
+
+#[test]
+fn malformed_planner_output_is_reported_with_generated_text_when_verbose() {
+    for use_chat_api in [false, true] {
+        let reply = if use_chat_api {
+            MockResponse::chat("I cannot help with that")
+        } else {
+            MockResponse::generated("I cannot help with that")
+        };
+        let server = MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![reply]);
+        let config_path = ConfigOptions {
+            use_chat_api,
+            ..ConfigOptions::default()
+        }
+        .write(server.base_url());
+        let mut cli = sample_cli(config_path, vec!["print ok"]);
+        cli.quiet = false;
+        cli.verbose = true;
+
+        let error = run(cli).expect_err("text without JSON should fail");
+        let message = format!("{error:#}");
+
+        assert!(message.contains("did not contain a JSON object"));
+        assert!(message.contains("I cannot help with that"));
+    }
+}
+
+#[test]
+fn invalid_planner_json_and_empty_command_list_are_errors() {
+    let cases = [
+        (
+            r#"{"commands":[{"description":"no command field"}]}"#,
+            "failed to parse planner JSON",
+        ),
+        (
+            r#"{"summary":"Nothing","unresolved":false,"commands":[]}"#,
+            "planner returned an empty command list",
+        ),
+    ];
+
+    for (plan, expected) in cases {
+        let server = MockOllamaServer::start(
+            Arc::new(Mutex::new(Vec::new())),
+            vec![MockResponse::generated(plan)],
+        );
+        let config_path = ConfigOptions::default().write(server.base_url());
+
+        let error = run(sample_cli(config_path, vec!["print ok"])).expect_err("plan should fail");
+
+        assert!(
+            format!("{error:#}").contains(expected),
+            "expected `{expected}` in `{error:#}`"
+        );
+    }
+}
+
+#[test]
+fn ollama_error_status_and_undecodable_body_are_errors() {
+    let cases = [
+        (
+            MockResponse::status(500, r#"{"error":"boom"}"#),
+            "unsuccessful response",
+        ),
+        (
+            MockResponse::json("not json"),
+            "failed to decode Ollama response",
+        ),
+    ];
+
+    for (reply, expected) in cases {
+        let server = MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![reply]);
+        let config_path = ConfigOptions::default().write(server.base_url());
+        let mut cli = sample_cli(config_path, vec!["print ok"]);
+        cli.quiet = false;
+        cli.verbose = true;
+
+        let error = run(cli).expect_err("bad Ollama reply should fail");
+
+        assert!(
+            format!("{error:#}").contains(expected),
+            "expected `{expected}` in `{error:#}`"
+        );
+    }
+}
+
+#[test]
+fn check_fails_when_model_is_missing() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            MockResponse::json(r#"{"version":"0.6.0"}"#),
+            MockResponse::json(r#"{"models":[{"name":"another:latest"}]}"#),
+        ],
+    );
+    let config_path = ConfigOptions::default().write(server.base_url());
+    let mut cli = sample_cli(config_path, vec![]);
+    cli.check = true;
+    cli.quiet = false;
+    cli.verbose = true;
+
+    let error = run(cli).expect_err("missing model should fail the check");
+
+    assert!(error.to_string().contains("environment check failed"));
+}
+
+#[test]
+fn check_fails_when_service_returns_an_error() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            MockResponse::status(500, "{}"),
+            MockResponse::status(500, "{}"),
+        ],
+    );
+    let config_path = ConfigOptions::default().write(server.base_url());
+    let mut cli = sample_cli(config_path, vec![]);
+    cli.check = true;
+    cli.quiet = false;
+
+    let error = run(cli).expect_err("failing service should fail the check");
+
+    assert!(error.to_string().contains("environment check failed"));
+}
+
+#[test]
+fn check_fails_when_editor_is_not_installed() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            MockResponse::json(r#"{"version":"0.6.0"}"#),
+            MockResponse::json(r#"{"models":[{"name":"lfm2:latest"}]}"#),
+        ],
+    );
+    let config_path = temp_config_with_editor(server.base_url(), "cli-bot-no-such-editor");
+    let mut cli = sample_cli(config_path, vec![]);
+    cli.check = true;
+    cli.quiet = false;
+
+    let error = run(cli).expect_err("unknown editor should fail the check");
+
+    assert!(error.to_string().contains("environment check failed"));
+}
+
+#[test]
+fn models_benchmark_writes_markdown_report_with_failures_and_fallbacks() {
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server = MockOllamaServer::start(
+        capture.clone(),
+        vec![
+            MockResponse::json(r#"{"version":"0.6.0"}"#),
+            MockResponse::json(
+                r#"{"models":[{"name":"good:latest","details":{"parameter_size":"1.2B"}},{"name":"bad:latest"}]}"#,
+            ),
+            // good:latest — one plan, one unresolved request with its fallback
+            MockResponse::generated(PRINTF_PLAN),
+            MockResponse::generated(UNRESOLVED_PLAN),
+            MockResponse::generated("forty-two"),
+            // bad:latest — no JSON, then a fallback that the service rejects
+            MockResponse::generated("no json here"),
+            MockResponse::generated(UNRESOLVED_PLAN),
+            MockResponse::status(500, "{}"),
+        ],
+    );
+    let config_path = ConfigOptions {
+        benchmark_models: vec!["good:latest", "bad:latest"],
+        benchmark_queries: vec!["print ok", "meaning | of life"],
+        ..ConfigOptions::default()
+    }
+    .write(server.base_url());
+    let report_path = unique_temp_dir("cli-bot-benchmark-report").with_extension("md");
+    let mut cli = sample_cli(config_path, vec![]);
+    cli.models_benchmark = Some(report_path.clone());
+
+    run(cli).expect("models benchmark should write a report");
+
+    let report = fs::read_to_string(&report_path).expect("report should exist");
+    assert!(report.starts_with("# Model Benchmark Report"));
+    assert!(report.contains("- Ollama Version: 0.6.0"));
+    assert!(report.contains("| good:latest | 1.2B |"));
+    assert!(report.contains("| bad:latest | unknown |"));
+    assert!(report.contains("meaning \\| of life"));
+    assert!(report.contains("| 1 | good:latest | 1.2B | 100.0% |"));
+    assert!(report.contains("| 2 | bad:latest | unknown | 0.0% | failed |"));
+    assert!(report.contains("printf ok [recommended]"));
+    assert!(report.contains("forty-two"));
+    assert!(report.contains("did not contain a JSON object"));
+
+    let requests = capture.lock().expect("capture should lock");
+    assert_eq!(requests.len(), 8);
+    assert!(requests[2].body.contains(r#""model":"good:latest""#));
+    assert!(requests[5].body.contains(r#""model":"bad:latest""#));
+}
+
+#[test]
+fn models_benchmark_takes_report_path_from_trailing_argument() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            MockResponse::json(r#"{"version":"0.6.0"}"#),
+            MockResponse::json(r#"{"models":[]}"#),
+            MockResponse::generated(PRINTF_PLAN),
+        ],
+    );
+    let config_path = ConfigOptions {
+        benchmark_models: vec!["good:latest"],
+        benchmark_queries: vec!["print ok"],
+        ..ConfigOptions::default()
+    }
+    .write(server.base_url());
+    let report_path = unique_temp_dir("cli-bot-benchmark-arg").with_extension("md");
+    // `--models-benchmark report.md` parses the path as the request.
+    let mut cli = sample_cli(config_path, vec![&path_to_string(&report_path)]);
+    cli.models_benchmark = Some(PathBuf::from("-"));
+
+    run(cli).expect("models benchmark should accept a trailing path");
+
+    assert!(report_path.is_file());
+}
+
+#[test]
+fn models_benchmark_requires_models_and_queries() {
+    let cases = [
+        (vec![], vec!["print ok"], "models_benchmark.models is empty"),
+        (
+            vec!["good:latest"],
+            vec![],
+            "models_benchmark.queries is empty",
+        ),
+    ];
+
+    for (benchmark_models, benchmark_queries, expected) in cases {
+        let config_path = ConfigOptions {
+            benchmark_models,
+            benchmark_queries,
+            ..ConfigOptions::default()
+        }
+        .write("http://127.0.0.1:1");
+        let mut cli = sample_cli(config_path, vec![]);
+        cli.models_benchmark = Some(PathBuf::from("-"));
+
+        let error = run(cli).expect_err("empty benchmark config should fail");
+
+        assert!(error.to_string().contains(expected));
+    }
+}
+
+#[test]
+fn session_clear_removes_the_session_file_and_reports_missing_one() {
+    let storage_dir = unique_temp_dir("cli-bot-session-clear");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated(PRINTF_PLAN)],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let mut seed = session_cli(config_path.clone(), vec!["print ok"]);
+    seed.dry_run = true;
+    run(seed).expect("seeding request should succeed");
+    assert!(storage_dir.join("sessions/default.json").is_file());
+
+    for _ in 0..2 {
+        let mut clear = session_cli(config_path.clone(), vec![]);
+        clear.session_clear = true;
+        run(clear).expect("session clear should succeed, also when nothing is stored");
+        assert!(!storage_dir.join("sessions/default.json").exists());
+    }
+
+    let mut list = session_cli(config_path, vec![]);
+    list.session_list = true;
+    run(list).expect("listing no sessions should succeed");
+}
+
+#[test]
+fn session_commands_reject_conflicting_or_disabled_use() {
+    let storage_dir = unique_temp_dir("cli-bot-session-conflict");
+    let config_path = ConfigOptions::with_session(&storage_dir).write("http://127.0.0.1:1");
+
+    let mut both = session_cli(config_path.clone(), vec![]);
+    both.session_show = true;
+    both.session_clear = true;
+    let error = run(both).expect_err("show and clear together should fail");
+    assert!(error.to_string().contains("cannot be used together"));
+
+    let mut disabled = session_cli(config_path.clone(), vec![]);
+    disabled.session_show = true;
+    disabled.no_session = true;
+    let error = run(disabled).expect_err("session command without session memory should fail");
+    assert!(error.to_string().contains("session memory is disabled"));
+
+    let mut bad_name = session_cli(config_path, vec![]);
+    bad_name.session_show = true;
+    bad_name.session = Some("../escape".to_string());
+    let error = run(bad_name).expect_err("path-like session name should fail");
+    assert!(error.to_string().contains("session name must contain only"));
+}
+
+/// A CLI that prints its normal output, keeps session memory on, and executes
+/// the selected command unless the test sets `dry_run`.
+fn session_cli(config_path: PathBuf, request: Vec<&str>) -> Cli {
+    let mut cli = sample_cli(config_path, request);
+    cli.quiet = false;
+    cli.dry_run = false;
+    cli.no_session = false;
+    cli
+}
+
+fn read_default_session(storage_dir: &Path) -> serde_json::Value {
+    let raw = fs::read_to_string(storage_dir.join("sessions/default.json"))
+        .expect("default session file should exist");
+    serde_json::from_str(&raw).expect("session file should be JSON")
+}
+
+/// Writes a default config, then points `preferred_editor` at `editor`.
+fn temp_config_with_editor(base_url: &str, editor: &str) -> PathBuf {
+    let config_path = ConfigOptions::default().write(base_url);
+    let config = fs::read_to_string(&config_path).expect("config should read");
+    fs::write(
+        &config_path,
+        config.replace(
+            r#"preferred_editor = "/bin/sh""#,
+            &format!(r#"preferred_editor = "{editor}""#),
+        ),
+    )
+    .expect("config should write");
+    config_path
+}
+
 fn sample_cli(config_path: PathBuf, request: Vec<&str>) -> Cli {
     Cli {
         request: request.into_iter().map(ToString::to_string).collect(),
@@ -236,6 +800,7 @@ fn sample_cli(config_path: PathBuf, request: Vec<&str>) -> Cli {
         benchmark: false,
         verbose: false,
         quiet: true,
+        interactive: false,
         session: None,
         no_session: true,
         session_show: false,
@@ -252,19 +817,62 @@ fn write_config(
     retention_days: Option<u64>,
     session_enabled: bool,
 ) -> PathBuf {
-    let temp_dir = unique_temp_dir("cli-bot-integration-test");
-    fs::create_dir_all(&temp_dir).expect("temp dir should exist");
-    let config_path = temp_dir.join("cli-bot.toml");
-    let preferred_editor = if require_editor { "nvim" } else { "/bin/sh" };
-    let storage_dir = storage_dir
-        .as_deref()
-        .map(path_to_string)
-        .unwrap_or_else(|| "auto".to_string());
-    let retention_days_line = retention_days
-        .map(|value| format!("retention_days = {value}\n"))
-        .unwrap_or_default();
-    let config = format!(
-        r#"
+    ConfigOptions {
+        use_chat_api,
+        require_editor,
+        storage_dir,
+        retention_days,
+        session_enabled,
+        ..ConfigOptions::default()
+    }
+    .write(base_url)
+}
+
+/// Settings a test may vary in the generated `cli-bot.toml`.
+#[derive(Default)]
+struct ConfigOptions {
+    use_chat_api: bool,
+    require_editor: bool,
+    storage_dir: Option<PathBuf>,
+    retention_days: Option<u64>,
+    session_enabled: bool,
+    capture_command_output: bool,
+    include_command_output_in_prompt: bool,
+    benchmark_models: Vec<&'static str>,
+    benchmark_queries: Vec<&'static str>,
+}
+
+impl ConfigOptions {
+    /// Session memory enabled and stored below `storage_dir`, so a test never
+    /// touches the user's real session files.
+    fn with_session(storage_dir: &Path) -> Self {
+        Self {
+            storage_dir: Some(storage_dir.to_path_buf()),
+            session_enabled: true,
+            ..Self::default()
+        }
+    }
+
+    fn write(&self, base_url: &str) -> PathBuf {
+        let temp_dir = unique_temp_dir("cli-bot-integration-test");
+        fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let config_path = temp_dir.join("cli-bot.toml");
+        let preferred_editor = if self.require_editor {
+            "nvim"
+        } else {
+            "/bin/sh"
+        };
+        let storage_dir = self
+            .storage_dir
+            .as_deref()
+            .map(path_to_string)
+            .unwrap_or_else(|| "auto".to_string());
+        let retention_days_line = self
+            .retention_days
+            .map(|value| format!("retention_days = {value}\n"))
+            .unwrap_or_default();
+        let config = format!(
+            r#"
 [ollama]
 base_url = "{base_url}"
 model = "lfm2:latest"
@@ -301,24 +909,29 @@ max_turns = 6
 include_working_directory = true
 save_text_responses = true
 save_selected_commands = true
-capture_command_output = false
-include_command_output_in_prompt = false
+capture_command_output = {capture_command_output}
+include_command_output_in_prompt = {include_command_output_in_prompt}
 max_output_bytes = 8192
 {retention_days_line}
 
 [models_benchmark]
-models = []
-queries = []
+models = {benchmark_models:?}
+queries = {benchmark_queries:?}
 "#,
-        base_url = base_url,
-        use_chat_api = use_chat_api,
-        preferred_editor = preferred_editor,
-        session_enabled = session_enabled,
-        storage_dir = storage_dir,
-        retention_days_line = retention_days_line,
-    );
-    fs::write(&config_path, config).expect("config should write");
-    config_path
+            base_url = base_url,
+            use_chat_api = self.use_chat_api,
+            preferred_editor = preferred_editor,
+            session_enabled = self.session_enabled,
+            storage_dir = storage_dir,
+            capture_command_output = self.capture_command_output,
+            include_command_output_in_prompt = self.include_command_output_in_prompt,
+            retention_days_line = retention_days_line,
+            benchmark_models = self.benchmark_models,
+            benchmark_queries = self.benchmark_queries,
+        );
+        fs::write(&config_path, config).expect("config should write");
+        config_path
+    }
 }
 
 struct MockOllamaServer {
@@ -350,7 +963,8 @@ impl MockOllamaServer {
                 capture.lock().expect("capture should lock").push(request);
                 let payload = response.body;
                 let http = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.status,
                     payload.len(),
                     payload
                 );
@@ -383,14 +997,30 @@ impl Drop for MockOllamaServer {
 }
 
 struct MockResponse {
+    status: u16,
     body: String,
 }
 
 impl MockResponse {
     fn json(body: &str) -> Self {
+        Self::status(200, body)
+    }
+
+    fn status(status: u16, body: &str) -> Self {
         Self {
+            status,
             body: body.to_string(),
         }
+    }
+
+    /// A `/api/generate` reply whose generated text is `text`.
+    fn generated(text: &str) -> Self {
+        Self::json(&serde_json::json!({ "response": text }).to_string())
+    }
+
+    /// A `/api/chat` reply whose message content is `text`.
+    fn chat(text: &str) -> Self {
+        Self::json(&serde_json::json!({ "message": { "content": text } }).to_string())
     }
 }
 
@@ -452,7 +1082,9 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time should move forward")
         .as_nanos();
-    std::env::temp_dir().join(format!("{prefix}-{unique}"))
+    // Tests run in parallel, so the clock alone could repeat.
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{prefix}-{unique}-{sequence}"))
 }
 
 fn current_epoch_ms() -> u128 {

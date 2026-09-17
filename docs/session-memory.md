@@ -1,6 +1,6 @@
 # Session Memory
 
-This document describes the shipped Multi-turn Session Memory feature in `cli-bot` `0.3.0`, plus the design choices behind it.
+This document describes the shipped Multi-turn Session Memory feature in `cli-bot` `0.3.1`, plus the design choices behind it.
 
 ## Problem
 
@@ -259,7 +259,7 @@ Later integration coverage:
 
 ## Shipped Rollout
 
-Implemented in `0.3.0`:
+Implemented in `0.3.1`:
 
 - named local sessions with `--session`
 - prompt injection from recent summarized turns
@@ -286,14 +286,14 @@ The shipped implementation follows that recommendation: persisted named sessions
 
 ## Future Decisions
 
-1. Should `0.3.0` stay on `/api/generate` or move to Ollama's role-based `/api/chat`?
-`0.3.0` now supports both. `/api/chat` can be enabled with `ollama.use_chat_api = true`.
+1. Should `0.3.1` stay on `/api/generate` or move to Ollama's role-based `/api/chat`?
+`0.3.1` now supports both. `/api/chat` can be enabled with `ollama.use_chat_api = true`.
 
 2. Should command output stay JSON-backed if capture becomes heavily used?
 Maybe not. SQLite becomes more attractive if stored output grows substantially.
 
 3. Should automatic pruning or retention windows be added?
-`0.3.0` adds `retention_days`, but future work may still add finer-grained pruning policies.
+`0.3.1` includes `retention_days`, but future work may still add finer-grained pruning policies.
 
 4. Should session memory feed both planner and unresolved text fallback?
 Already yes, with the same ambiguity rules.

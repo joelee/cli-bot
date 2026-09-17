@@ -2,9 +2,11 @@ name: Release Checks
 
 on:
   pull_request:
+  # Feature branches run the checks on every push, before a pull request exists.
   push:
     branches:
       - main
+      - "feature/**"
     tags:
       - "v*"
   workflow_dispatch:
@@ -21,28 +23,26 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Keep the version in step with rust-toolchain.toml.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          components: rustfmt, clippy
+          toolchain: 1.98.1
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Install just and cargo tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run tests
-        run: cargo test --all-targets --all-features
-
-      - name: Verify publishable package
-        run: cargo package
+      - name: Run all checks (format, lint, scripts, tests, coverage gate, build, package)
+        run: just check
 
       - name: List packaged crate contents
-        run: cargo package --list
+        run: just package-list
 
   publish-prep:
     name: Prepare Publish Artifact
@@ -54,14 +54,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Keep the version in step with rust-toolchain.toml.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: rustfmt
+
+      - name: Install just and cargo tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Build crate archive
-        run: cargo package
+        run: just package
 
       - name: Upload crate package artifact
         uses: actions/upload-artifact@v4

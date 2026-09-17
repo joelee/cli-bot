@@ -4,6 +4,50 @@ All notable changes to `cli-bot` will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [Unreleased]
+
+## [0.3.2] - 2026-09-17
+
+The first published release since 0.3.0; it includes everything listed under 0.3.1.
+
+### Changed
+
+- Adopted the working rules of the `passalong` project in `AGENTS.md`: test-first development, mocked external interfaces, numbered delivery plans, and a backlog in `docs/backlog.md` (PLAN-00001)
+- Added a `justfile` as the single task runner; `just check` runs the format check, lint, script syntax check, tests, coverage gate, locked build, and package verification, and the Git hook and CI call the same recipes
+- Replaced `scripts/verify.sh`, `scripts/install-hooks.sh`, and `scripts/coverage-unit.sh` with `just` recipes; coverage reports now come from `cargo llvm-cov`
+- Enforced a line-coverage gate of 80% locally and in CI
+- Pinned the Rust toolchain to 1.98.1 in `rust-toolchain.toml`
+
+### Added
+
+- `.env.sample` documenting `HOMEBREW_FORMULA_FILE` for `scripts/release.sh`
+- `docs/developer-guide.md`, and `docs/backlog.md` in place of `docs/roadmap.md`
+
+### Testing
+
+- Added mocked-Ollama integration tests for command execution, session memory, verbose output, `--check` failures, and `--models-benchmark`, raising line coverage from 76% to 89%
+
+## [0.3.1] - 2026-04-19
+
+Not published to crates.io and never tagged; shipped as part of 0.3.2.
+
+### Changed
+
+- Increased unit test coverage across CLI orchestration, session storage, shell execution, and prompt helpers
+- Added Codecov unit test result uploads using `codecov/test-results-action@v1`
+- Expanded the unit coverage workflow to produce and upload JUnit XML test results
+
+### Added
+
+- `--interactive` / `-i` mode to keep prompting for requests until `Ctrl-C` or `/quit`
+- interactive prompt styling with cyan `cli-bot`, gray `>`, red `Error:` output on command failure, and a red `cli-bot` prompt after the failure
+- interactive startup hint showing `/quit` and `Ctrl-C` exit options
+
+### Testing
+
+- Added targeted unit tests for benchmark rendering, session command helpers, shell execution branches, and session text/output helpers
+- Added CI test result export through `cargo2junit` for Codecov ingestion
+
 ## [0.3.0] - 2026-04-18
 
 ### Added

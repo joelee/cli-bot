@@ -520,7 +520,7 @@ fn truncate_to_bytes(value: &str, max_bytes: usize) -> String {
 mod tests {
     use super::{
         SessionCommandChoice, SessionExecution, SessionRecord, SessionStore, SessionTurn,
-        current_timestamp_epoch_ms, normalize_session_name,
+        current_timestamp_epoch_ms, normalize_session_name, summarize_text, truncate_to_bytes,
     };
     use crate::config::{SessionMemoryConfig, SessionScope};
     use std::env;
@@ -713,6 +713,99 @@ mod tests {
         assert!(store.list().expect("sessions should list").is_empty());
 
         fs::remove_dir_all(&temp_root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn clear_returns_false_when_session_missing() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!("cli-bot-session-clear-test-{unique}"));
+        fs::create_dir_all(&temp_root).expect("temp root should exist");
+
+        let config = SessionMemoryConfig {
+            storage_dir: temp_root.display().to_string(),
+            ..SessionMemoryConfig::default()
+        };
+        let store = SessionStore::new(config).expect("store should initialize");
+
+        assert!(!store.clear(Some("default")).expect("clear should succeed"));
+
+        fs::remove_dir_all(&temp_root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn render_prompt_context_includes_output_when_enabled() {
+        let config = SessionMemoryConfig {
+            include_command_output_in_prompt: true,
+            max_output_bytes: 12,
+            ..SessionMemoryConfig::default()
+        };
+        let store = SessionStore::new(config).expect("store should initialize");
+        let mut record = SessionRecord::new(
+            "default".into(),
+            SessionScope::Global,
+            PathBuf::from("/tmp/project"),
+        );
+        record.push_turn(SessionTurn {
+            timestamp_epoch_ms: 1,
+            request: "run that again".into(),
+            working_directory: Some("/tmp/project".into()),
+            plan_summary: None,
+            unresolved: false,
+            command_choices: Vec::new(),
+            selected_command: Some("make test".into()),
+            selected_command_rationale: None,
+            confirmation_required: false,
+            text_response: Some("done".into()),
+            execution: Some(SessionExecution {
+                executed: true,
+                exit_status: None,
+                stdout: Some("line one\nline two".into()),
+                stderr: Some("warning line".into()),
+            }),
+        });
+
+        let context = store
+            .render_prompt_context(&record)
+            .expect("context should exist");
+
+        assert!(context.contains("stdout:"));
+        assert!(context.contains("stderr:"));
+        assert!(context.contains("line one"));
+    }
+
+    #[test]
+    fn should_capture_command_output_tracks_config() {
+        let config = SessionMemoryConfig {
+            capture_command_output: true,
+            ..SessionMemoryConfig::default()
+        };
+        let store = SessionStore::new(config).expect("store should initialize");
+
+        assert!(store.should_capture_command_output());
+    }
+
+    #[test]
+    fn unresolved_text_turn_marks_request_unresolved() {
+        let path = PathBuf::from("/tmp/project");
+        let turn =
+            SessionTurn::unresolved_text("spell mantainence", "maintenance", true, path.as_path());
+
+        assert!(turn.unresolved);
+        assert_eq!(turn.text_response.as_deref(), Some("maintenance"));
+        assert_eq!(turn.working_directory.as_deref(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn summarize_text_flattens_newlines() {
+        assert_eq!(summarize_text("line one\nline two", 0), "line one line two");
+    }
+
+    #[test]
+    fn truncate_to_bytes_handles_tiny_limits() {
+        assert_eq!(truncate_to_bytes("abcdef", 0), "[truncated]");
     }
 
     fn sample_store() -> SessionStore {

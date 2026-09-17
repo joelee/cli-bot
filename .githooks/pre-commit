@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-"$(dirname "$(readlink -f "$0")")/../scripts/verify.sh"
+cd "$(dirname "$(readlink -f "$0")")/.."
+
+if ! command -v just >/dev/null 2>&1; then
+  printf 'Error: `just` is required to run the pre-commit checks.\n' >&2
+  printf 'Install it with `cargo install --locked just` or see https://just.systems\n' >&2
+  exit 1
+fi
+
+just check

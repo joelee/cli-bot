@@ -22,6 +22,25 @@ You can also skip the quotes for simple requests:
 cli-bot ping google five times
 ```
 
+For a continuous terminal session, run:
+
+```bash
+cli-bot -i
+```
+
+This keeps prompting until you press `Ctrl-C` or type `/quit`.
+
+When interactive mode starts, `cli-bot` prints a short exit hint so the session controls are visible immediately.
+
+The prompt is shown as cyan `cli-bot` with a gray `>` suffix. If the previous command fails, `cli-bot` prints a red `Error:` line and the next prompt shows `cli-bot` in red. Interactive mode also works well with session memory:
+
+```bash
+cli-bot -i --session work
+cli-bot> find my git config file
+cli-bot> open it in nvim
+cli-bot> /quit
+```
+
 On macOS, you can also install with Homebrew:
 
 ```bash
@@ -114,6 +133,7 @@ It is meant to feel less like a chatbot and more like a sharp command-line copil
 - lets the user pick between multiple command choices
 - can optionally auto-select the LLM-recommended best command
 - can fall back to a direct text response when a request cannot be resolved into a shell command safely
+- supports an `--interactive` / `-i` mode for continuous prompting until `/quit` or `Ctrl-C`
 - supports benchmarking to compare models by latency
 - supports verbose debugging to inspect full Ollama responses
 - respects a preferred editor from config or `$EDITOR`
@@ -531,14 +551,19 @@ If `NO_COLOR` is set, color output is disabled.
 - [Session Memory Design](docs/session-memory.md)
 - [Usage](docs/usage.md)
 - [Testing](docs/testing.md)
-- [Roadmap](docs/roadmap.md)
+- [Developer Guide](docs/developer-guide.md)
+- [Backlog](docs/backlog.md)
 
 ## Developer Setup
 
-If you use the `pre-commit` framework, install the repo hooks with:
+cli-bot uses [`just`](https://just.systems) as its task runner:
 
 ```bash
-pre-commit install
+just setup          # install cargo-llvm-cov and cargo-nextest
+just install-hooks  # run the checks before every commit
+just check          # format, lint, tests, 80% coverage gate, build, package
 ```
 
-The repository includes `.pre-commit-config.yaml`, which runs `./scripts/verify.sh` before commits.
+`just check` is the verification command; the Git hook and CI run the same recipe. If you use the `pre-commit` framework instead, `pre-commit install` enables `.pre-commit-config.yaml`, which also runs `just check`.
+
+See the [Developer Guide](docs/developer-guide.md) for every recipe and the contribution workflow.
