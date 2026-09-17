@@ -551,14 +551,19 @@ If `NO_COLOR` is set, color output is disabled.
 - [Session Memory Design](docs/session-memory.md)
 - [Usage](docs/usage.md)
 - [Testing](docs/testing.md)
-- [Roadmap](docs/roadmap.md)
+- [Developer Guide](docs/developer-guide.md)
+- [Backlog](docs/backlog.md)
 
 ## Developer Setup
 
-If you use the `pre-commit` framework, install the repo hooks with:
+cli-bot uses [`just`](https://just.systems) as its task runner:
 
 ```bash
-pre-commit install
+just setup          # install cargo-llvm-cov and cargo-nextest
+just install-hooks  # run the checks before every commit
+just check          # format, lint, tests, 80% coverage gate, build, package
 ```
 
-The repository includes `.pre-commit-config.yaml`, which runs `./scripts/verify.sh` before commits.
+`just check` is the verification command; the Git hook and CI run the same recipe. If you use the `pre-commit` framework instead, `pre-commit install` enables `.pre-commit-config.yaml`, which also runs `just check`.
+
+See the [Developer Guide](docs/developer-guide.md) for every recipe and the contribution workflow.

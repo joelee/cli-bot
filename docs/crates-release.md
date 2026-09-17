@@ -28,23 +28,23 @@ Use the next semver version you want to release.
 Before publishing, run:
 
 ```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+just check
 ```
+
+This runs the format check, clippy, the script syntax check, the tests, the 80% coverage gate, a locked build, and `cargo package`. See the [Developer Guide](developer-guide.md).
 
 ## Build The Publishable Package
 
-Create the crate archive locally:
+`just check` already packages and verifies the crate. To do only that step:
 
 ```bash
-cargo package
+just package
 ```
 
 Inspect the packaged contents if needed:
 
 ```bash
-cargo package --list
+just package-list
 ```
 
 ## Authenticate With crates.io
@@ -70,15 +70,15 @@ cargo publish
 Or use the local release helper script after pushing the GitHub tag/release:
 
 ```bash
-scripts/release.sh v0.2.1
+just release v0.2.1
 ```
 
-The script:
+This runs `scripts/release.sh`. The script:
 
 - loads `.env` if present
 - reads `HOMEBREW_FORMULA_FILE` from the environment or `.env`
 - verifies the requested tag matches `Cargo.toml`
-- runs `fmt`, `clippy`, `test`, and `package`
+- runs `just check`
 - publishes to crates.io
 - waits for the crate URL to become available
 - computes the checksum from the published crate artifact
@@ -135,10 +135,7 @@ Example for version `0.2.1`:
 
 ```bash
 # edit Cargo.toml
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-cargo package
+just check
 cargo publish
 curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
 ```
@@ -146,7 +143,7 @@ curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
 Or with the helper script:
 
 ```bash
-scripts/release.sh v0.2.1
+just release v0.2.1
 ```
 
 ## Notes

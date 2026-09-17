@@ -74,29 +74,27 @@ The repository includes these workflows:
 
 `release-checks.yml` does two things:
 
-1. Runs release checks on pull requests and pushes to `main`
+1. Runs release checks on pull requests and pushes to `main` and `feature/**` branches
 2. Prepares a publishable `.crate` artifact on version tags like `v0.1.0` or manual workflow dispatch
 
 The verification job runs:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-cargo package
-cargo package --list
+just check
+just package-list
 ```
+
+`just check` includes the 80% line-coverage gate, so a pull request that lowers coverage below it fails here.
 
 On matching tags or manual runs, the workflow also uploads the packaged crate from `target/package/*.crate` as a GitHub Actions artifact.
 
 ### Unit Coverage
 
-`unit-coverage.yml` runs `bash ./scripts/coverage-unit.sh` and uploads:
+`unit-coverage.yml` runs `just coverage-lcov`, `just coverage-html`, and `just test-junit`, and uploads:
 
-- `target/coverage/html/`
-- `target/coverage/unit-report.txt`
-- `target/coverage/unit-tests.profdata`
+- `target/llvm-cov/html/`
 - `target/coverage/lcov.info`
+- `target/test-results/unit-tests.xml`
 
 It also uploads the LCOV report to Codecov.
 

@@ -37,9 +37,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00001-rules-alignment"
 execution_started_at: "2026-09-17T17:27:54Z"
-execution_updated_at: "2026-09-17T17:36:04Z"
+execution_updated_at: "2026-09-17T17:38:25Z"
 execution_completed_at: null
-current_step: "PLAN-00001-STEP-07"
+current_step: "PLAN-00001-STEP-08"
 ---
 
 # Delivery Plan 00001: Rules Alignment And Justfile
@@ -715,7 +715,7 @@ hook itself runs `just check`.
 | PLAN-00001-STEP-05 | completed | 2026-09-17T17:33:47Z | 2026-09-17T17:34:21Z | Verification results rows 13-14 | Hooks are now active in this clone |
 | PLAN-00001-STEP-06 | completed | 2026-09-17T17:34:32Z | 2026-09-17T17:35:09Z | Verification results rows 15-16 | GitHub run checked in STEP-08 after the user pushes |
 | PLAN-00001-STEP-07 | completed | 2026-09-17T17:35:15Z | 2026-09-17T17:36:04Z | Verification results rows 17-18 | The workflow puts the changelog entry after plan approval, because the plan gate needs a clean tree |
-| PLAN-00001-STEP-08 | not-started | — | — | — | — |
+| PLAN-00001-STEP-08 | in-progress | 2026-09-17T17:36:11Z | — | Verification results rows 19-24 | All local work done; waits for the user to push so AC-08 can be recorded |
 
 Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 `skipped`. A skipped step requires explicit user approval recorded in Evidence.
@@ -735,6 +735,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-17T17:34:32Z | STEP-06 | The STEP-05 commit `06c7029` ran `just check` through `.githooks/pre-commit` (its output showed the recipes) and succeeded | git commit output | Edit workflows |
 | 2026-09-17T17:35:09Z | STEP-06 | All three workflows pin toolchain 1.98.1, install `just` and `cargo-llvm-cov` (and `cargo-nextest` for unit coverage), and run `just` recipes; `release-checks.yml` also runs on `feature/**` pushes; artifact and Pages paths moved to `target/llvm-cov/html`; step completed | Step commit | STEP-07 |
 | 2026-09-17T17:36:04Z | STEP-07 | Rewrote `AGENTS.md` (14 sections, decisions D-01, D-02, D-04, D-05, D-07 applied, `Known deviations` added); created `.env.sample`; step completed | Step commit | STEP-08 |
+| 2026-09-17T17:38:25Z | STEP-08 | `docs/roadmap.md` moved to `docs/backlog.md` and rewritten; `docs/developer-guide.md` written; `README.md`, `docs/testing.md`, `docs/publishing.md`, `docs/crates-release.md` now name `just` recipes. One more finding added to the backlog: a failed command is never saved as a session turn (seen while writing STEP-03 tests) | Step commit | User pushes the branch; Builder records the GitHub run (AC-08) |
 
 ### Deviations and blockers
 
@@ -765,14 +766,20 @@ None.
 | 2026-09-17T17:35:09Z | STEP-06 | `just lint-workflows`; `grep -n 'coverage-unit\\|verify.sh' .github/workflows/*.yml`; `grep -nE 'cargo (fmt\|clippy\|test\|package)' .github/workflows/*.yml` | pass | actionlint exit 0; both greps print nothing |
 | 2026-09-17T17:35:15Z | STEP-07 | Section headings of `../passalong/AGENTS.md` against REQ-01 | pass | Same ten headings as at planning; last changed 2026-09-14, before this plan |
 | 2026-09-17T17:36:04Z | STEP-07 | `grep -c '^## ' AGENTS.md`; `git check-ignore -q .env`; `grep -c 'HOMEBREW_FORMULA_FILE=' .env.sample` | pass | 14; exit 0; 1 |
+| 2026-09-17T17:36:11Z | STEP-08 | `git grep -n 'verify\.sh\\|install-hooks\.sh\\|coverage-unit\.sh\\|roadmap\.md' -- ':!CHANGELOG.md' ':!docs/plans'` before the step | recorded | 9 lines to fix in `README.md` (2), `docs/testing.md` (7), `docs/publishing.md` (1); hits in `AGENTS.md`, hooks, and workflows were already fixed by STEP-05 to STEP-07 |
+| 2026-09-17T17:38:25Z | STEP-08 | The same grep after the step | pass | No output (exit 1) |
+| 2026-09-17T17:38:25Z | STEP-08 | `just ci` | pass | Exit 0; 118 tests pass; lines 3813, missed 422, 88.93%; package verified; actionlint clean |
+| 2026-09-17T17:38:25Z | STEP-08 | `cargo run -q -- --help` against the STEP-01 output; `git diff fa272c8 -- src/ Cargo.toml Cargo.lock` | pass | Identical; empty diff; `version = "0.3.1"` |
+| 2026-09-17T17:38:25Z | STEP-08 | Acceptance criteria AC-01 to AC-07 and AC-09 to AC-15 | pass | Each checked with the command named in the criterion; `docs/developer-guide.md` names all 20 recipes |
+| 2026-09-17T17:38:25Z | STEP-08 | AC-08: workflow runs on the pushed head commit | pending | Needs the user to push `feature/00001-rules-alignment`; then `gh run list --branch feature/00001-rules-alignment` |
 
 ### Completion summary
 
-- **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00001-REQ-01, REQ-02, REQ-03, REQ-05, REQ-06, REQ-07, REQ-09; REQ-04 pending the GitHub run
-- **Incomplete requirements:** REQ-08, REQ-10
-- **Outstanding blockers:** None
-- **Review request:** Not ready
+- **Implementation status:** `in-progress`: all local work is complete; only AC-08 (the GitHub run) is open
+- **Completed requirements:** PLAN-00001-REQ-01 to REQ-03, REQ-05 to REQ-10
+- **Incomplete requirements:** REQ-04: its local half is verified (AC-07); AC-08 needs the pushed branch
+- **Outstanding blockers:** None. Left with the user: push `feature/00001-rules-alignment`; decide whether this ships as 0.3.1 or 0.3.2 (D-03)
+- **Review request:** Ready once AC-08 is recorded. Coverage: 88.93% lines (was 76.00%)
 <!-- BUILDER_WORK_LOG_END -->
 
 ## 18. Planning change log
