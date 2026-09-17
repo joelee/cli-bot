@@ -8,10 +8,10 @@ tags:
   - claude-code
 type: delivery-plan
 plan_id: "PLAN-00001"
-plan_status: draft                 # draft | approved | cancelled
+plan_status: approved              # draft | approved | cancelled
 plan_kind: initial                 # initial | superseding
 created_at: "2026-09-17T16:22:20Z"
-approved_at: null
+approved_at: "2026-09-17T17:27:35Z"
 planner_agent: "Claude Code"
 planner_model: "anthropic/claude-fable-5-1"
 triggered_by: user                 # user | agent:<agent-name>
@@ -26,7 +26,7 @@ requirements_count: 10
 steps_count: 8
 acceptance_criteria_count: 15
 blocking_decisions: 0
-build_ready: false
+build_ready: true
 web_research_used: false
 confidence: high                  # high | medium | low
 
@@ -751,6 +751,7 @@ None.
 | Timestamp (UTC) | Plan status | Change | Reason | Requested/approved by |
 |---|---|---|---|---|
 | 2026-09-17T16:22:20Z | draft | Plan created | User asked for a rules-alignment plan that includes the move to a `justfile` | User |
+| 2026-09-17T17:27:35Z | approved | Plan approved without amendment; `build_ready` set. The draft was committed by the planner as `8afb408` at the user's request, a one-off waiver of the rule that the user commits drafts | User replied "approved" and chose "Commit draft for me" | User |
 
 ## 19. External references
 
