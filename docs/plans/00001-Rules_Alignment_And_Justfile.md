@@ -37,9 +37,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00001-rules-alignment"
 execution_started_at: "2026-09-17T17:27:54Z"
-execution_updated_at: "2026-09-17T17:28:33Z"
+execution_updated_at: "2026-09-17T17:28:54Z"
 execution_completed_at: null
-current_step: "PLAN-00001-STEP-01"
+current_step: "PLAN-00001-STEP-02"
 ---
 
 # Delivery Plan 00001: Rules Alignment And Justfile
@@ -709,7 +709,7 @@ hook itself runs `just check`.
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
 | PLAN-00001-STEP-01 | completed | 2026-09-17T17:27:54Z | 2026-09-17T17:28:33Z | Verification results rows 1-3 | Baseline identical to plan section 3 |
-| PLAN-00001-STEP-02 | not-started | — | — | — | — |
+| PLAN-00001-STEP-02 | completed | 2026-09-17T17:28:41Z | 2026-09-17T17:28:54Z | Verification results rows 4-5 | No format or lint difference under the pinned toolchain |
 | PLAN-00001-STEP-03 | not-started | — | — | — | — |
 | PLAN-00001-STEP-04 | not-started | — | — | — | — |
 | PLAN-00001-STEP-05 | not-started | — | — | — | — |
@@ -726,6 +726,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 |---|---|---|---|---|
 | 2026-09-17T17:27:54Z | STEP-01 | Execution started; baseline recorded; `--help` output (27 lines) saved outside the repository for AC-14 | Verification results | Add changelog entry |
 | 2026-09-17T17:28:33Z | STEP-01 | Added `## [Unreleased]` to `CHANGELOG.md`; step completed | Step commit | STEP-02 |
+| 2026-09-17T17:28:54Z | STEP-02 | Created `rust-toolchain.toml`; step completed | Step commit | STEP-03 |
 
 ### Deviations and blockers
 
@@ -741,12 +742,14 @@ None.
 | 2026-09-17T17:27:54Z | STEP-01 | `cargo fmt --all --check`; `cargo clippy --all-targets --all-features -- -D warnings` | pass | Exit 0, no warnings |
 | 2026-09-17T17:27:54Z | STEP-01 | `cargo llvm-cov --workspace --all-features --summary-only` | pass; matches baseline | 97 tests pass (91 unit, 6 integration); lines 3813, missed 915, 76.00% |
 | 2026-09-17T17:28:33Z | STEP-01 | `grep -n '^## \[' CHANGELOG.md \| head -2` | pass | `Unreleased` on line 7, `0.3.1` follows |
+| 2026-09-17T17:28:41Z | STEP-02 | `rustup show active-toolchain` before the change | recorded | `stable-x86_64-unknown-linux-gnu (default)` |
+| 2026-09-17T17:28:54Z | STEP-02 | `rustc --version`; fmt check; clippy `-D warnings`; `cargo test --all-targets --all-features` | pass | `rustc 1.98.1 (48a229cea 2026-09-01)`, overridden by `rust-toolchain.toml`; 97 tests pass |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00001-REQ-09
-- **Incomplete requirements:** REQ-01 to REQ-08, REQ-10
+- **Completed requirements:** PLAN-00001-REQ-05, REQ-09
+- **Incomplete requirements:** REQ-01 to REQ-04, REQ-06 to REQ-08, REQ-10
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
