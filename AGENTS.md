@@ -81,7 +81,7 @@ Update when behavior, commands, config, architecture, or user workflow changes:
 
 ## New feature workflow
 1. Run `git status --short`. If non-empty, stop and report dirty files; do not edit.
-2. Create branch from `develop`: `git switch -c feature/<NNNNN>-<feature_name>`, where `NNNNN` is the plan number.
+2. Create branch from `main`: `git switch -c feature/<NNNNN>-<feature_name>`, where `NNNNN` is the plan number.
 3. Create the plan in `docs/plans/` as `docs/plans/AGENTS.md` directs: a numbered file allocated with `.agents/skills/allocating-report-numbers/allocate-report.sh`. Plans are never renamed or moved; their status lives in the front matter.
 4. Plan must include scope, TDD unit tests, integration tests, config/secrets impact, observability, docs, coverage target, risks.
 5. The user approves the plan. Work starts only after approval.
@@ -97,8 +97,8 @@ Update when behavior, commands, config, architecture, or user workflow changes:
 2. Agent completes the plan: all checks pass, coverage >= 80%, branch CI passes. Agent hands off with the evidence.
 3. User reviews and approves the work.
 4. Agent finalises the release in one commit, `release: vX.Y.Z - <top feature>`: in `CHANGELOG.md`, rename `Unreleased` to `[X.Y.Z] - <date>` and add a fresh `Unreleased` above it; remove pre-release wording from `README.md` and other docs; suggest the PR title and description.
-5. User pushes the branch and opens a PR to `develop`. Agent debugs PR CI failures on the branch. User merges, then merges `develop` to `main`.
-6. User tags the merge commit and runs `just release vX.Y.Z` (`scripts/release.sh`), which checks, publishes to crates.io, and updates the Homebrew formula named by `HOMEBREW_FORMULA_FILE`. The agent never pushes, tags, or publishes. A published crate version can only be yanked, never replaced.
+5. User verifies, pushes the branch, and opens a PR to `main`; there is no `develop` branch. `main` accepts only PRs whose checks pass. Agent debugs PR CI failures on the branch. User gets the PR approved and merged.
+6. User pulls `main`, tags the merge commit, pushes the tag, and runs `just release vX.Y.Z` (`scripts/release.sh`), which checks, publishes to crates.io, and updates the Homebrew formula named by `HOMEBREW_FORMULA_FILE`. The agent never pushes, tags, or publishes. A published crate version can only be yanked, never replaced.
 7. User commits and pushes the Homebrew formula change. Agent helps debug a failed release.
 
 ## Known deviations

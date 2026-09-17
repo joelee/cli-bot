@@ -79,7 +79,7 @@ See [Testing](testing.md) for coverage reports and CI.
 
 Work follows `AGENTS.md` § New feature workflow:
 
-1. Start from a clean tree on `develop` and create
+1. Start from a clean tree on `main` and create
    `feature/<NNNNN>-<name>`.
 2. Write the plan in `docs/plans/` (see `docs/plans/AGENTS.md`); allocate
    its number with
@@ -88,7 +88,7 @@ Work follows `AGENTS.md` § New feature workflow:
 4. Add the `Unreleased` changelog entry, then work test-first, one commit
    per plan step, keeping the plan's Builder Work Log current.
 5. Finish with `just ci`, update `docs/backlog.md`, and hand over. The
-   owner pushes and opens the pull request into `develop`.
+   owner pushes and opens the pull request into `main`.
 
 Ideas (`docs/ideas/`) and code reviews (`docs/reviews/`) are numbered,
 immutable records with their own `AGENTS.md`.

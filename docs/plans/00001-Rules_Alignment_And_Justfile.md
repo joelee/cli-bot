@@ -32,13 +32,13 @@ confidence: high                  # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+implementation_status: completed # not-started | in-progress | blocked | completed | abandoned
 builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00001-rules-alignment"
 execution_started_at: "2026-09-17T17:27:54Z"
-execution_updated_at: "2026-09-17T17:38:25Z"
-execution_completed_at: null
+execution_updated_at: "2026-09-17T17:47:31Z"
+execution_completed_at: "2026-09-17T17:47:31Z"
 current_step: "PLAN-00001-STEP-08"
 ---
 
@@ -715,7 +715,7 @@ hook itself runs `just check`.
 | PLAN-00001-STEP-05 | completed | 2026-09-17T17:33:47Z | 2026-09-17T17:34:21Z | Verification results rows 13-14 | Hooks are now active in this clone |
 | PLAN-00001-STEP-06 | completed | 2026-09-17T17:34:32Z | 2026-09-17T17:35:09Z | Verification results rows 15-16 | GitHub run checked in STEP-08 after the user pushes |
 | PLAN-00001-STEP-07 | completed | 2026-09-17T17:35:15Z | 2026-09-17T17:36:04Z | Verification results rows 17-18 | The workflow puts the changelog entry after plan approval, because the plan gate needs a clean tree |
-| PLAN-00001-STEP-08 | in-progress | 2026-09-17T17:36:11Z | — | Verification results rows 19-24 | All local work done; waits for the user to push so AC-08 can be recorded |
+| PLAN-00001-STEP-08 | completed | 2026-09-17T17:36:11Z | 2026-09-17T17:47:31Z | Verification results rows 19-25 | All 15 acceptance criteria met; two user decisions recorded under Deviations |
 
 Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 `skipped`. A skipped step requires explicit user approval recorded in Evidence.
@@ -736,13 +736,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-17T17:35:09Z | STEP-06 | All three workflows pin toolchain 1.98.1, install `just` and `cargo-llvm-cov` (and `cargo-nextest` for unit coverage), and run `just` recipes; `release-checks.yml` also runs on `feature/**` pushes; artifact and Pages paths moved to `target/llvm-cov/html`; step completed | Step commit | STEP-07 |
 | 2026-09-17T17:36:04Z | STEP-07 | Rewrote `AGENTS.md` (14 sections, decisions D-01, D-02, D-04, D-05, D-07 applied, `Known deviations` added); created `.env.sample`; step completed | Step commit | STEP-08 |
 | 2026-09-17T17:38:25Z | STEP-08 | `docs/roadmap.md` moved to `docs/backlog.md` and rewritten; `docs/developer-guide.md` written; `README.md`, `docs/testing.md`, `docs/publishing.md`, `docs/crates-release.md` now name `just` recipes. One more finding added to the backlog: a failed command is never saved as a session turn (seen while writing STEP-03 tests) | Step commit | User pushes the branch; Builder records the GitHub run (AC-08) |
+| 2026-09-17T17:47:31Z | STEP-08 | User pushed the branch; AC-08 recorded; branch-flow documentation changed to `main` by user decision; step and plan completed | Verification results; Deviations | Release commit for v0.3.2, then the user opens the pull request into `main` |
 
 ### Deviations and blockers
 
 | Timestamp (UTC) | Step | Deviation or blocker | Impact | Decision required from |
 |---|---|---|---|---|
-
-None.
+| 2026-09-17T17:47:31Z | STEP-08 | User decision after the push, replacing D-07: pull requests go to `main`, and the `develop` branch will be removed, as in passalong. `AGENTS.md` (New feature workflow step 2, Release workflow steps 5-6) and `docs/developer-guide.md` changed from `develop` to `main` | Documentation only; no requirement or acceptance criterion changes | None; decided by the user on 2026-09-17 |
+| 2026-09-17T17:47:31Z | STEP-08 | User decision after the push, replacing D-03: this work and the unreleased 0.3.1 ship together as v0.3.2. The version bump and the changelog rename are made in a separate `release: v0.3.2` commit, outside this plan, so AC-15 holds for the plan commits | AC-15 is true up to this commit and stops being true at the release commit, by user instruction | None; decided by the user on 2026-09-17 |
 
 ### Verification results
 
@@ -772,14 +773,15 @@ None.
 | 2026-09-17T17:38:25Z | STEP-08 | `cargo run -q -- --help` against the STEP-01 output; `git diff fa272c8 -- src/ Cargo.toml Cargo.lock` | pass | Identical; empty diff; `version = "0.3.1"` |
 | 2026-09-17T17:38:25Z | STEP-08 | Acceptance criteria AC-01 to AC-07 and AC-09 to AC-15 | pass | Each checked with the command named in the criterion; `docs/developer-guide.md` names all 20 recipes |
 | 2026-09-17T17:38:25Z | STEP-08 | AC-08: workflow runs on the pushed head commit | pending | Needs the user to push `feature/00001-rules-alignment`; then `gh run list --branch feature/00001-rules-alignment` |
+| 2026-09-17T17:47:31Z | STEP-08 | AC-08: `gh run list --branch feature/00001-rules-alignment` | pass | Release Checks run 35254186685 on head `ae1727b`: `success`. It is the only workflow triggered by a `feature/**` push; Unit Coverage runs on the pull request |
 
 ### Completion summary
 
-- **Implementation status:** `in-progress`: all local work is complete; only AC-08 (the GitHub run) is open
-- **Completed requirements:** PLAN-00001-REQ-01 to REQ-03, REQ-05 to REQ-10
-- **Incomplete requirements:** REQ-04: its local half is verified (AC-07); AC-08 needs the pushed branch
-- **Outstanding blockers:** None. Left with the user: push `feature/00001-rules-alignment`; decide whether this ships as 0.3.1 or 0.3.2 (D-03)
-- **Review request:** Ready once AC-08 is recorded. Coverage: 88.93% lines (was 76.00%)
+- **Implementation status:** `completed`
+- **Completed requirements:** PLAN-00001-REQ-01 to REQ-10
+- **Incomplete requirements:** None
+- **Outstanding blockers:** None. Left with the user: open the pull request into `main`, merge, tag `v0.3.2`, run `just release v0.3.2`, remove `develop`
+- **Review request:** Ready. Coverage: 88.93% lines (was 76.00%)
 <!-- BUILDER_WORK_LOG_END -->
 
 ## 18. Planning change log
