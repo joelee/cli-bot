@@ -92,6 +92,7 @@ VERSION="${TAG#v}"
 [[ -f "$HOMEBREW_FORMULA_FILE" ]] || fail "Homebrew formula file does not exist: $HOMEBREW_FORMULA_FILE"
 
 require_command cargo
+require_command just
 require_command curl
 require_command perl
 
@@ -101,10 +102,7 @@ CARGO_VERSION="$(extract_cargo_version)"
 cd "$REPO_ROOT"
 
 printf 'Running release checks for cli-bot %s\n' "$VERSION"
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-cargo package
+just check
 
 CRATE_FILE="$REPO_ROOT/target/package/cli-bot-$VERSION.crate"
 [[ -f "$CRATE_FILE" ]] || fail "expected packaged crate not found: $CRATE_FILE"

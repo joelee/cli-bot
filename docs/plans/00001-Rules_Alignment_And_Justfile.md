@@ -37,9 +37,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00001-rules-alignment"
 execution_started_at: "2026-09-17T17:27:54Z"
-execution_updated_at: "2026-09-17T17:33:47Z"
+execution_updated_at: "2026-09-17T17:34:21Z"
 execution_completed_at: null
-current_step: "PLAN-00001-STEP-04"
+current_step: "PLAN-00001-STEP-05"
 ---
 
 # Delivery Plan 00001: Rules Alignment And Justfile
@@ -712,7 +712,7 @@ hook itself runs `just check`.
 | PLAN-00001-STEP-02 | completed | 2026-09-17T17:28:41Z | 2026-09-17T17:28:54Z | Verification results rows 4-5 | No format or lint difference under the pinned toolchain |
 | PLAN-00001-STEP-03 | completed | 2026-09-17T17:29:30Z | 2026-09-17T17:31:52Z | Verification results rows 6-9 | 88.93% lines; tests only, `src/` untouched; task 3 unit tests not needed (task 4) |
 | PLAN-00001-STEP-04 | completed | 2026-09-17T17:31:52Z | 2026-09-17T17:33:47Z | Verification results rows 10-12 | JUnit path bug in CI found and fixed |
-| PLAN-00001-STEP-05 | not-started | — | — | — | — |
+| PLAN-00001-STEP-05 | completed | 2026-09-17T17:33:47Z | 2026-09-17T17:34:21Z | Verification results rows 13-14 | Hooks are now active in this clone |
 | PLAN-00001-STEP-06 | not-started | — | — | — | — |
 | PLAN-00001-STEP-07 | not-started | — | — | — | — |
 | PLAN-00001-STEP-08 | not-started | — | — | — | — |
@@ -731,6 +731,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-17T17:31:52Z | STEP-03 | Added 21 integration tests (implementation task 2). Coverage reached 88.93%, so the unit tests of task 3 were not added, as task 4 directs. No test needs a terminal, a network, or Ollama; the only executed commands are `printf ok` and `exit 3` | Verification results | STEP-04 |
 | 2026-09-17T17:31:52Z | STEP-04 | Wrote `justfile`. `cargo-nextest` was not installed; `just setup` installed 0.9.145 into `~/.cargo/bin` | justfile | Verify JUnit path |
 | 2026-09-17T17:33:47Z | STEP-04 | With the old `.config/nextest.toml` path `../test-results/…` the JUnit file was written to `target/nextest/test-results/`, which CI never uploaded. Path changed to `../../test-results/unit-tests.xml`; step completed | .config/nextest.toml | STEP-05 |
+| 2026-09-17T17:34:21Z | STEP-05 | Hook and `.pre-commit-config.yaml` now run `just check`; removed `scripts/verify.sh`, `scripts/install-hooks.sh`, `scripts/coverage-unit.sh`; `scripts/release.sh` runs `just check` and requires `just`; ran `just install-hooks`; step completed | Step commit | STEP-06 |
 
 ### Deviations and blockers
 
@@ -755,12 +756,14 @@ None.
 | 2026-09-17T17:31:52Z | STEP-04 | `scripts/verify.sh` before the change | pass | Exit 0 |
 | 2026-09-17T17:33:47Z | STEP-04 | `just --list`; `just check` | pass | 20 recipes listed; `just check` exit 0 (fmt-check, lint, scripts-check, test, coverage 88.93%, build, package) |
 | 2026-09-17T17:33:47Z | STEP-04 | `just coverage-html`; `just coverage-lcov`; `just test-junit` | pass | `target/llvm-cov/html/index.html`, `target/coverage/lcov.info` (121941 bytes), `target/test-results/unit-tests.xml`; nextest ran 118 tests, all passed |
+| 2026-09-17T17:33:47Z | STEP-05 | `git config core.hooksPath` before the change | recorded | Unset (empty output) |
+| 2026-09-17T17:34:21Z | STEP-05 | `just install-hooks`; `git config core.hooksPath`; `bash -n scripts/release.sh`; `.githooks/pre-commit` run directly | pass | `.githooks`; hook exit 0. That the step commit itself ran the hook is recorded in the next execution-log entry, because the log is part of that commit |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00001-REQ-02, REQ-05, REQ-06, REQ-09
-- **Incomplete requirements:** REQ-01, REQ-03, REQ-04, REQ-07, REQ-08, REQ-10
+- **Completed requirements:** PLAN-00001-REQ-02, REQ-03, REQ-05, REQ-06, REQ-09
+- **Incomplete requirements:** REQ-01, REQ-04, REQ-07, REQ-08, REQ-10
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
