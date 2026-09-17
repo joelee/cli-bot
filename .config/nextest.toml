@@ -1,2 +1,4 @@
+# The path is relative to target/nextest/default/; CI uploads
+# target/test-results/unit-tests.xml.
 [profile.default.junit]
-path = "../test-results/unit-tests.xml"
+path = "../../test-results/unit-tests.xml"
