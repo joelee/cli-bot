@@ -37,9 +37,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00001-rules-alignment"
 execution_started_at: "2026-09-17T17:27:54Z"
-execution_updated_at: "2026-09-17T17:28:54Z"
+execution_updated_at: "2026-09-17T17:31:52Z"
 execution_completed_at: null
-current_step: "PLAN-00001-STEP-02"
+current_step: "PLAN-00001-STEP-03"
 ---
 
 # Delivery Plan 00001: Rules Alignment And Justfile
@@ -710,7 +710,7 @@ hook itself runs `just check`.
 |---|---|---|---|---|---|
 | PLAN-00001-STEP-01 | completed | 2026-09-17T17:27:54Z | 2026-09-17T17:28:33Z | Verification results rows 1-3 | Baseline identical to plan section 3 |
 | PLAN-00001-STEP-02 | completed | 2026-09-17T17:28:41Z | 2026-09-17T17:28:54Z | Verification results rows 4-5 | No format or lint difference under the pinned toolchain |
-| PLAN-00001-STEP-03 | not-started | — | — | — | — |
+| PLAN-00001-STEP-03 | completed | 2026-09-17T17:29:30Z | 2026-09-17T17:31:52Z | Verification results rows 6-9 | 88.93% lines; tests only, `src/` untouched; task 3 unit tests not needed (task 4) |
 | PLAN-00001-STEP-04 | not-started | — | — | — | — |
 | PLAN-00001-STEP-05 | not-started | — | — | — | — |
 | PLAN-00001-STEP-06 | not-started | — | — | — | — |
@@ -727,6 +727,8 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-17T17:27:54Z | STEP-01 | Execution started; baseline recorded; `--help` output (27 lines) saved outside the repository for AC-14 | Verification results | Add changelog entry |
 | 2026-09-17T17:28:33Z | STEP-01 | Added `## [Unreleased]` to `CHANGELOG.md`; step completed | Step commit | STEP-02 |
 | 2026-09-17T17:28:54Z | STEP-02 | Created `rust-toolchain.toml`; step completed | Step commit | STEP-03 |
+| 2026-09-17T17:29:30Z | STEP-03 | Refactored `tests/mock_ollama.rs` helpers: `ConfigOptions`, response status, `generated`/`chat` replies, collision-free temporary folders | tests/mock_ollama.rs | Add integration tests |
+| 2026-09-17T17:31:52Z | STEP-03 | Added 21 integration tests (implementation task 2). Coverage reached 88.93%, so the unit tests of task 3 were not added, as task 4 directs. No test needs a terminal, a network, or Ollama; the only executed commands are `printf ok` and `exit 3` | Verification results | STEP-04 |
 
 ### Deviations and blockers
 
@@ -744,12 +746,16 @@ None.
 | 2026-09-17T17:28:33Z | STEP-01 | `grep -n '^## \[' CHANGELOG.md \| head -2` | pass | `Unreleased` on line 7, `0.3.1` follows |
 | 2026-09-17T17:28:41Z | STEP-02 | `rustup show active-toolchain` before the change | recorded | `stable-x86_64-unknown-linux-gnu (default)` |
 | 2026-09-17T17:28:54Z | STEP-02 | `rustc --version`; fmt check; clippy `-D warnings`; `cargo test --all-targets --all-features` | pass | `rustc 1.98.1 (48a229cea 2026-09-01)`, overridden by `rust-toolchain.toml`; 97 tests pass |
+| 2026-09-17T17:29:30Z | STEP-03 | `cargo llvm-cov --workspace --all-features --fail-under-lines 80 --summary-only` before new tests | fails as expected | 76.00% (STEP-01 measurement on the same sources) |
+| 2026-09-17T17:31:52Z | STEP-03 | `cargo llvm-cov --workspace --all-features --fail-under-lines 80 --summary-only` | pass | Exit 0; lines 3813, missed 422, 88.93%. `lib.rs` 87.20%, `llm.rs` 95.43%, `session.rs` 88.25%, `output.rs` 87.06%, `environment.rs` 84.39%, `main.rs` 0.00% |
+| 2026-09-17T17:31:52Z | STEP-03 | `cargo test --test mock_ollama`, five consecutive runs; fmt check; clippy `-D warnings` | pass | 27 passed in every run; no warnings |
+| 2026-09-17T17:31:52Z | STEP-03 | `git diff fa272c8 -- src/` | pass | Empty: no file under `src/` changed |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00001-REQ-05, REQ-09
-- **Incomplete requirements:** REQ-01 to REQ-04, REQ-06 to REQ-08, REQ-10
+- **Completed requirements:** PLAN-00001-REQ-05, REQ-06, REQ-09
+- **Incomplete requirements:** REQ-01 to REQ-04, REQ-07, REQ-08, REQ-10
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
