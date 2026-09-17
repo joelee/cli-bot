@@ -32,14 +32,14 @@ confidence: high                  # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: not-started # not-started | in-progress | blocked | completed | abandoned
-builder_agent: null
-builder_model: null
-execution_branch: null
-execution_started_at: null
-execution_updated_at: null
+implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+builder_agent: "Claude Code"
+builder_model: "anthropic/claude-fable-5-1"
+execution_branch: "feature/00001-rules-alignment"
+execution_started_at: "2026-09-17T17:27:54Z"
+execution_updated_at: "2026-09-17T17:28:33Z"
 execution_completed_at: null
-current_step: null
+current_step: "PLAN-00001-STEP-01"
 ---
 
 # Delivery Plan 00001: Rules Alignment And Justfile
@@ -708,7 +708,7 @@ hook itself runs `just check`.
 
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
-| PLAN-00001-STEP-01 | not-started | — | — | — | — |
+| PLAN-00001-STEP-01 | completed | 2026-09-17T17:27:54Z | 2026-09-17T17:28:33Z | Verification results rows 1-3 | Baseline identical to plan section 3 |
 | PLAN-00001-STEP-02 | not-started | — | — | — | — |
 | PLAN-00001-STEP-03 | not-started | — | — | — | — |
 | PLAN-00001-STEP-04 | not-started | — | — | — | — |
@@ -724,6 +724,8 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
+| 2026-09-17T17:27:54Z | STEP-01 | Execution started; baseline recorded; `--help` output (27 lines) saved outside the repository for AC-14 | Verification results | Add changelog entry |
+| 2026-09-17T17:28:33Z | STEP-01 | Added `## [Unreleased]` to `CHANGELOG.md`; step completed | Step commit | STEP-02 |
 
 ### Deviations and blockers
 
@@ -736,12 +738,15 @@ None.
 
 | Timestamp (UTC) | Step | Command or check | Result | Evidence |
 |---|---|---|---|---|
+| 2026-09-17T17:27:54Z | STEP-01 | `cargo fmt --all --check`; `cargo clippy --all-targets --all-features -- -D warnings` | pass | Exit 0, no warnings |
+| 2026-09-17T17:27:54Z | STEP-01 | `cargo llvm-cov --workspace --all-features --summary-only` | pass; matches baseline | 97 tests pass (91 unit, 6 integration); lines 3813, missed 915, 76.00% |
+| 2026-09-17T17:28:33Z | STEP-01 | `grep -n '^## \[' CHANGELOG.md \| head -2` | pass | `Unreleased` on line 7, `0.3.1` follows |
 
 ### Completion summary
 
-- **Implementation status:** `not-started`
-- **Completed requirements:** None
-- **Incomplete requirements:** All
+- **Implementation status:** `in-progress`
+- **Completed requirements:** PLAN-00001-REQ-09
+- **Incomplete requirements:** REQ-01 to REQ-08, REQ-10
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

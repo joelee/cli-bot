@@ -4,6 +4,25 @@ All notable changes to `cli-bot` will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [Unreleased]
+
+### Changed
+
+- Adopted the working rules of the `passalong` project in `AGENTS.md`: test-first development, mocked external interfaces, numbered delivery plans, and a backlog in `docs/backlog.md` (PLAN-00001)
+- Added a `justfile` as the single task runner; `just check` runs the format check, lint, script syntax check, tests, coverage gate, locked build, and package verification, and the Git hook and CI call the same recipes
+- Replaced `scripts/verify.sh`, `scripts/install-hooks.sh`, and `scripts/coverage-unit.sh` with `just` recipes; coverage reports now come from `cargo llvm-cov`
+- Enforced a line-coverage gate of 80% locally and in CI
+- Pinned the Rust toolchain to 1.98.1 in `rust-toolchain.toml`
+
+### Added
+
+- `.env.sample` documenting `HOMEBREW_FORMULA_FILE` for `scripts/release.sh`
+- `docs/developer-guide.md`, and `docs/backlog.md` in place of `docs/roadmap.md`
+
+### Testing
+
+- Added mocked-Ollama integration tests for command execution, session memory, verbose output, `--check` failures, and `--models-benchmark`, raising line coverage from 76% to above 80%
+
 ## [0.3.1] - 2026-04-19
 
 ### Changed
