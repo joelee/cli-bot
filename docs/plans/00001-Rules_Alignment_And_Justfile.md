@@ -37,9 +37,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00001-rules-alignment"
 execution_started_at: "2026-09-17T17:27:54Z"
-execution_updated_at: "2026-09-17T17:35:09Z"
+execution_updated_at: "2026-09-17T17:36:04Z"
 execution_completed_at: null
-current_step: "PLAN-00001-STEP-06"
+current_step: "PLAN-00001-STEP-07"
 ---
 
 # Delivery Plan 00001: Rules Alignment And Justfile
@@ -714,7 +714,7 @@ hook itself runs `just check`.
 | PLAN-00001-STEP-04 | completed | 2026-09-17T17:31:52Z | 2026-09-17T17:33:47Z | Verification results rows 10-12 | JUnit path bug in CI found and fixed |
 | PLAN-00001-STEP-05 | completed | 2026-09-17T17:33:47Z | 2026-09-17T17:34:21Z | Verification results rows 13-14 | Hooks are now active in this clone |
 | PLAN-00001-STEP-06 | completed | 2026-09-17T17:34:32Z | 2026-09-17T17:35:09Z | Verification results rows 15-16 | GitHub run checked in STEP-08 after the user pushes |
-| PLAN-00001-STEP-07 | not-started | — | — | — | — |
+| PLAN-00001-STEP-07 | completed | 2026-09-17T17:35:15Z | 2026-09-17T17:36:04Z | Verification results rows 17-18 | The workflow puts the changelog entry after plan approval, because the plan gate needs a clean tree |
 | PLAN-00001-STEP-08 | not-started | — | — | — | — |
 
 Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
@@ -734,6 +734,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-17T17:34:21Z | STEP-05 | Hook and `.pre-commit-config.yaml` now run `just check`; removed `scripts/verify.sh`, `scripts/install-hooks.sh`, `scripts/coverage-unit.sh`; `scripts/release.sh` runs `just check` and requires `just`; ran `just install-hooks`; step completed | Step commit | STEP-06 |
 | 2026-09-17T17:34:32Z | STEP-06 | The STEP-05 commit `06c7029` ran `just check` through `.githooks/pre-commit` (its output showed the recipes) and succeeded | git commit output | Edit workflows |
 | 2026-09-17T17:35:09Z | STEP-06 | All three workflows pin toolchain 1.98.1, install `just` and `cargo-llvm-cov` (and `cargo-nextest` for unit coverage), and run `just` recipes; `release-checks.yml` also runs on `feature/**` pushes; artifact and Pages paths moved to `target/llvm-cov/html`; step completed | Step commit | STEP-07 |
+| 2026-09-17T17:36:04Z | STEP-07 | Rewrote `AGENTS.md` (14 sections, decisions D-01, D-02, D-04, D-05, D-07 applied, `Known deviations` added); created `.env.sample`; step completed | Step commit | STEP-08 |
 
 ### Deviations and blockers
 
@@ -762,12 +763,14 @@ None.
 | 2026-09-17T17:34:21Z | STEP-05 | `just install-hooks`; `git config core.hooksPath`; `bash -n scripts/release.sh`; `.githooks/pre-commit` run directly | pass | `.githooks`; hook exit 0. That the step commit itself ran the hook is recorded in the next execution-log entry, because the log is part of that commit |
 | 2026-09-17T17:34:32Z | STEP-06 | `just lint-workflows` on the unchanged workflows | pass | actionlint 1.7.12 (local), exit 0 |
 | 2026-09-17T17:35:09Z | STEP-06 | `just lint-workflows`; `grep -n 'coverage-unit\\|verify.sh' .github/workflows/*.yml`; `grep -nE 'cargo (fmt\|clippy\|test\|package)' .github/workflows/*.yml` | pass | actionlint exit 0; both greps print nothing |
+| 2026-09-17T17:35:15Z | STEP-07 | Section headings of `../passalong/AGENTS.md` against REQ-01 | pass | Same ten headings as at planning; last changed 2026-09-14, before this plan |
+| 2026-09-17T17:36:04Z | STEP-07 | `grep -c '^## ' AGENTS.md`; `git check-ignore -q .env`; `grep -c 'HOMEBREW_FORMULA_FILE=' .env.sample` | pass | 14; exit 0; 1 |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00001-REQ-02, REQ-03, REQ-05, REQ-06, REQ-09; REQ-04 pending the GitHub run
-- **Incomplete requirements:** REQ-01, REQ-07, REQ-08, REQ-10
+- **Completed requirements:** PLAN-00001-REQ-01, REQ-02, REQ-03, REQ-05, REQ-06, REQ-07, REQ-09; REQ-04 pending the GitHub run
+- **Incomplete requirements:** REQ-08, REQ-10
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

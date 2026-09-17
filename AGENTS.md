@@ -1,34 +1,124 @@
-# AGENTS.md
+# AGENTS.md - cli-bot (Rust/cargo/just)
+
+## Scope
+Applies to this repo unless a deeper `AGENTS.md` overrides it. Follow explicit user instructions first. `docs/ideas/`, `docs/plans/`, and `docs/reviews/` each have their own `AGENTS.md`; read it before writing there. These rules are adapted from `../passalong/AGENTS.md`.
 
 ## Purpose
+`cli-bot` is a Rust CLI that turns natural-language requests into shell commands through Ollama, asks before running a risky command, and runs the selected command in the user's shell.
 
-This repository contains `cli-bot`, a Rust CLI that converts natural-language requests into shell commands through Ollama.
+## Stack
+- Single Rust crate managed by `cargo`; `Cargo.lock` is committed.
+- Toolchain pinned in `rust-toolchain.toml`. Keep the version in the GitHub workflows in step with it.
+- Format with `rustfmt`; lint with `clippy`; run every task through the `justfile`.
+- cli-bot runs commands in the user's own shell, so there is no container build or runtime.
 
-## Working Rules
-
-- Keep the implementation config-driven through `cli-bot.toml`.
+## Product rules
+- Keep behaviour config-driven through `cli-bot.toml`.
 - Preserve the safety model: risky commands require explicit approval before execution.
 - When multiple commands are returned, keep the interactive selection flow intact.
+- Keep shell command generation as the primary product behaviour.
 - Prefer small, local changes over broad refactors.
-- Update docs in `docs/` when behavior, architecture, or configuration changes.
-- Update [CHANGELOG.md](CHANGELOG.md) when preparing or making a version bump.
-- When implementing a new feature, plan integration-test coverage as part of the feature work, not as an afterthought.
-- Prefer mocked integration tests for Ollama- or IO-driven features so new behavior is exercised through the real application flow without requiring external services.
 
-## Verification
+## Non-negotiables
+- TDD: write or update a failing unit test before production code; then implement; then refactor.
+- Unit tests must mock external interfaces: HTTP, filesystem edges, clocks, randomness, subprocesses.
+- Every feature includes integration-test coverage planned up front and implemented before completion. Exercise Ollama- and IO-driven behaviour through the real application flow with the mock server in `tests/mock_ollama.rs`; never call a real Ollama service or the network from a test.
+- A test may run only a harmless command through the shell, such as `printf`. A test must never open a terminal prompt: `cargo test` run from a terminal has a TTY.
+- Coverage gate: line coverage >= 80%; report coverage in completion notes.
+- Add comments/rustdoc for public APIs, unsafe code, complex blocks, and non-obvious logic; avoid comments that restate code.
+- Avoid `unsafe`; if unavoidable, justify with a safety comment and test coverage.
+- No secrets in code, tests, docs, logs, or VCS.
 
-Run these before considering work complete:
+## Commands
+Use the `just` recipes. Each wraps the cargo command shown:
+- Format check: `just fmt-check` (`cargo fmt --all -- --check`)
+- Lint: `just lint` (`cargo clippy --workspace --all-targets --all-features -- -D warnings`)
+- Script syntax: `just scripts-check` (`bash -n` on `scripts/*.sh` and `.githooks/*`)
+- Tests: `just test` (`cargo test --workspace --all-targets --all-features`)
+- Coverage: `just coverage` (`cargo llvm-cov --workspace --all-features --fail-under-lines 80 --summary-only`)
+- Build: `just build` (`cargo build --workspace --all-features --locked`)
+- Package: `just package` (`cargo package --allow-dirty`)
+- All checks: `just check` runs all of the above. `just ci` adds `just lint-workflows`.
+- The Git hook (`.githooks/pre-commit`, enabled with `just install-hooks`), `.pre-commit-config.yaml`, and CI all run `just check`. Never bypass the hook.
+- See `docs/developer-guide.md` for every recipe.
 
-```bash
-./scripts/verify.sh
-```
+## Config and secrets
+- Secrets live only in `.env`; `.env` is in `.gitignore`.
+- Maintain `.env.sample` with supported variable names and safe example values.
+- Non-secret config lives in the TOML config file.
+- Config lookup order for new work:
+  1. `--config` argument
+  2. `CLI_BOT_CONFIG_FILE`
+  3. `$XDG_CONFIG_HOME/cli-bot/config.toml`
+  4. `$HOME/.config/cli-bot/config.toml`
+  5. `/etc/cli-bot/config.toml`
+  6. `./config.toml`
+- Document all config in `docs/configuration.md` and keep defaults deterministic.
 
-## Project Layout
+## Observability
+- Logging is mandatory in core flows. Do not use `println!`/`eprintln!` for app logs except CLI output explicitly meant for users.
+- Use syslog-compatible output and levels exposed as: Error, Warning, Info, Verbose, Debug.
+- Map levels consistently: Error=err, Warning=warning, Info=info, Verbose=notice, Debug=debug.
+- Logs must include timestamp, level, target/component, event/message, and correlation/request id when available.
+- Never log secrets or full credentials.
 
-- `src/config.rs`: TOML config loading
-- `src/llm.rs`: Ollama request/response handling
+## Docs to maintain
+Update when behavior, commands, config, architecture, or user workflow changes:
+- `README.md`
+- `CHANGELOG.md`
+- `docs/architecture.md`
+- `docs/configuration.md`
+- `docs/usage.md`
+- `docs/session-memory.md`
+- `docs/testing.md`
+- `docs/developer-guide.md`
+- `docs/backlog.md`
+
+## Backlog rules
+- Track future work in `docs/backlog.md`.
+- On completion, remove completed items from backlog.
+- Add obvious follow-ups under `Agent suggested next steps`.
+
+## New feature workflow
+1. Run `git status --short`. If non-empty, stop and report dirty files; do not edit.
+2. Create branch from `develop`: `git switch -c feature/<NNNNN>-<feature_name>`, where `NNNNN` is the plan number.
+3. Create the plan in `docs/plans/` as `docs/plans/AGENTS.md` directs: a numbered file allocated with `.agents/skills/allocating-report-numbers/allocate-report.sh`. Plans are never renamed or moved; their status lives in the front matter.
+4. Plan must include scope, TDD unit tests, integration tests, config/secrets impact, observability, docs, coverage target, risks.
+5. The user approves the plan. Work starts only after approval.
+6. Add a `CHANGELOG.md` entry under `Unreleased`.
+7. Write failing unit tests first; mock external interfaces.
+8. Implement minimal code; add integration tests; update docs/config/backlog.
+9. Commit each plan step as `build: complete PLAN-<NNNNN>-STEP-<NN> - <title>` after its verification passes, and keep the plan's Builder Work Log current.
+10. Run `just ci` and ensure coverage >= 80%.
+11. Report changed files, tests run, coverage result, docs updated, and backlog updates.
+
+## Release workflow
+1. Use SemVer `vMAJOR.MINOR.PATCH`. If no version is given, increment PATCH. The plan's documentation step bumps `Cargo.toml` and `Cargo.lock`.
+2. Agent completes the plan: all checks pass, coverage >= 80%, branch CI passes. Agent hands off with the evidence.
+3. User reviews and approves the work.
+4. Agent finalises the release in one commit, `release: vX.Y.Z - <top feature>`: in `CHANGELOG.md`, rename `Unreleased` to `[X.Y.Z] - <date>` and add a fresh `Unreleased` above it; remove pre-release wording from `README.md` and other docs; suggest the PR title and description.
+5. User pushes the branch and opens a PR to `develop`. Agent debugs PR CI failures on the branch. User merges, then merges `develop` to `main`.
+6. User tags the merge commit and runs `just release vX.Y.Z` (`scripts/release.sh`), which checks, publishes to crates.io, and updates the Homebrew formula named by `HOMEBREW_FORMULA_FILE`. The agent never pushes, tags, or publishes. A published crate version can only be yanked, never replaced.
+7. User commits and pushes the Homebrew formula change. Agent helps debug a failed release.
+
+## Known deviations
+Rules above that the code does not meet yet. Do not make them worse; each is tracked in `docs/backlog.md` under `Agent suggested next steps`.
+- **Config lookup order:** only `--config`, `~/.config/cli-bot/cli-bot.toml`, and `/etc/cli-bot.toml` are read, and the file is named `cli-bot.toml`.
+- **Logging:** there is no logging framework; `--verbose` prints `[verbose]` lines with `eprintln!`.
+- **Rustdoc:** most public items have no rustdoc.
+- **Release publishing:** the user publishes from their machine with `scripts/release.sh`; there is no release workflow in CI and no `docs/release/`.
+
+## Project layout
+- `src/lib.rs`: CLI definition and request flow (`run`), `--check`, `--models-benchmark`, interactive mode
+- `src/config.rs`: TOML config loading and lookup
+- `src/environment.rs`: OS, distro, and package-manager detection
+- `src/llm.rs`: Ollama request/response handling and prompts
 - `src/planner.rs`: structured command plan types and safety checks
+- `src/session.rs`: session memory storage and prompt context
 - `src/shell.rs`: shell execution
-- `docs/`: project documentation
-- `.githooks/pre-commit`: local pre-commit verification script
-- `scripts/verify.sh`: shared verification entrypoint for local checks and hooks
+- `src/output.rs`: ANSI styling
+- `tests/mock_ollama.rs`: integration tests against a mock Ollama server
+- `justfile`: task runner for every check
+- `.githooks/pre-commit`: runs `just check`
+- `scripts/release.sh`: crates.io publish and Homebrew formula update
+- `docs/`: project documentation; `docs/plans/`, `docs/ideas/`, `docs/reviews/` hold numbered records
