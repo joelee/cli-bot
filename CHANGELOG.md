@@ -6,6 +6,10 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-17
+
+The first published release since 0.3.0; it includes everything listed under 0.3.1.
+
 ### Changed
 
 - Adopted the working rules of the `passalong` project in `AGENTS.md`: test-first development, mocked external interfaces, numbered delivery plans, and a backlog in `docs/backlog.md` (PLAN-00001)
@@ -21,9 +25,11 @@ The format is based on Keep a Changelog.
 
 ### Testing
 
-- Added mocked-Ollama integration tests for command execution, session memory, verbose output, `--check` failures, and `--models-benchmark`, raising line coverage from 76% to above 80%
+- Added mocked-Ollama integration tests for command execution, session memory, verbose output, `--check` failures, and `--models-benchmark`, raising line coverage from 76% to 89%
 
 ## [0.3.1] - 2026-04-19
+
+Not published to crates.io and never tagged; shipped as part of 0.3.2.
 
 ### Changed
 

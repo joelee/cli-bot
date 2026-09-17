@@ -86,7 +86,7 @@ If `HOMEBREW_FORMULA_FILE` points to the local formula file, `cli-bot` can updat
 
 ```bash
 export HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
-scripts/release.sh v0.2.1
+just release v0.2.1
 ```
 
 You can also place that variable in `.env` at the root of the `cli-bot` repository:

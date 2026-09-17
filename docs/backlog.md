@@ -4,13 +4,6 @@ Future work not covered by an active plan. Completed items are removed.
 Items here are candidates, not release promises. Shell command generation
 stays the primary product behaviour.
 
-## Release status
-
-- **0.3.1 is not released.** crates.io, `main`, and the newest tag are at
-  0.3.0. `develop` carries 0.3.1 (interactive mode) plus the `Unreleased`
-  changelog section (PLAN-00001). The owner decides whether these ship
-  together as 0.3.1 or as 0.3.1 and 0.3.2.
-
 ## Candidate features
 
 - **External dictionary and language tools.** Use dictionary, spelling, or
