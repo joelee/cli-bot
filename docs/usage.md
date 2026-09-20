@@ -178,7 +178,7 @@ This mode:
 
 Commands are never executed in this mode. It is for comparing model behavior and response quality.
 
-The current published benchmark report is available at [Models Benchmark Report](models-benchmark-report.md), and it documents why `lfm2:latest` is the default model.
+The current published benchmark report is available at [Models Benchmark Report (v0.3.2)](models-benchmark-report-v0.3.2.md), and it documents why `ornith-1.5:9b` is the default model.
 
 ## Color Output
 
@@ -197,7 +197,7 @@ If the `NO_COLOR` environment variable is set, color output is disabled.
 ## Model Override
 
 ```bash
-cli-bot --model lfm2:latest --benchmark --dry-run "Ping google five times"
+cli-bot --model qwen3.8:27b --benchmark --dry-run "Ping google five times"
 ```
 
 `--model` overrides `ollama.model` from the config file for that single invocation. It also affects `--check`.

@@ -24,7 +24,7 @@ If no config file is found, `cli-bot` can create a default config automatically 
 Then verify the setup:
 
 ```bash
-ollama pull lfm2:latest
+ollama pull ornith-1.5:9b
 cli-bot --check
 ```
 

@@ -28,12 +28,12 @@ ollama list
 
 ## Pull the Default Model
 
-`cli-bot` currently defaults to `lfm2:latest`.
+`cli-bot` currently defaults to `ornith-1.5:9b`.
 
 Pull it with:
 
 ```bash
-ollama pull lfm2:latest
+ollama pull ornith-1.5:9b
 ```
 
 ## Use a Different Model
