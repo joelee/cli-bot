@@ -11,7 +11,7 @@ Instead of remembering exact flags, command variants, and editor invocations, yo
 ## Quick Start
 
 ```bash
-ollama pull lfm2:latest
+ollama pull ornith-1.5:9b
 cargo install cli-bot
 cli-bot "Ping google five times"
 ```
@@ -295,7 +295,7 @@ If you skip that step, `cli-bot` will create a default config automatically at `
 Before first use, make sure Ollama is running and the default model is available:
 
 ```bash
-ollama pull lfm2:latest
+ollama pull ornith-1.5:9b
 cli-bot --check
 ```
 
@@ -372,7 +372,7 @@ At minimum, make sure:
 Example:
 
 ```bash
-ollama pull lfm2:latest
+ollama pull ornith-1.5:9b
 ```
 
 Detailed instructions are in [Install Ollama](docs/install-ollama.md).
@@ -445,14 +445,14 @@ This keeps the tool useful without pretending shell execution is risk-free.
 One of the practical uses of `cli-bot` is comparing local Ollama models for real CLI tasks.
 
 ```bash
-cli-bot --config ./cli-bot.toml --model lfm2:latest --benchmark --dry-run "Ping google five times"
+cli-bot --config ./cli-bot.toml --model qwen3.8:27b --benchmark --dry-run "Ping google five times"
 ```
 
 The current default model selection is documented in the published benchmark report:
 
-- [Models Benchmark Report](docs/models-benchmark-report.md)
+- [Models Benchmark Report (v0.3.2)](docs/models-benchmark-report-v0.3.2.md)
 
-That report captures comparative results across multiple models and is the basis for choosing `lfm2:latest` as the default model.
+That report captures comparative results across multiple models and is the basis for choosing `ornith-1.5:9b` as the default model.
 
 The benchmark report includes:
 

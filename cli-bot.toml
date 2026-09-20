@@ -1,6 +1,6 @@
 [ollama]
 base_url = "http://127.0.0.1:11434"
-model = "lfm2:latest"
+model = "ornith-1.5:9b"
 temperature = 0.0
 use_chat_api = true
 system_prompt = """
@@ -66,11 +66,14 @@ retention_days = 14
 
 [models_benchmark]
 models = [
-  "lfm2:latest",
-  "qwen3.5:latest",
-  "llama3.2:latest",
+  "ornith-1.5:9b",
+  "phi4-mini:latest",
+  "lfm2.5:8b",
   "gemma4:latest",
-  "gemma4:26b"  
+  "qwen3.8:27b",
+  "muse-glimmer:latest",
+  "nemotron-3.5-lightning:30b",
+  "nemotron-3-super:120b"
 ]
 queries = [
   "Ping google five times",

@@ -6,6 +6,10 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+
+- Changed the default model to `ornith-1.5:9b` in the default config template; docs now point to `docs/models-benchmark-report-v0.3.2.md` as the report behind that choice
+
 ## [0.3.2] - 2026-09-17
 
 The first published release since 0.3.0; it includes everything listed under 0.3.1.

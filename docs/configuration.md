@@ -74,7 +74,7 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 ```toml
 [ollama]
 base_url = "http://127.0.0.1:11434"
-model = "lfm2:latest"
+model = "ornith-1.5:9b"
 temperature = 0.0
 use_chat_api = true
 system_prompt = "Return JSON only"
@@ -114,7 +114,7 @@ max_output_bytes = 8192
 retention_days = 14
 
 [models_benchmark]
-models = ["lfm2:latest", "qwen3.5:latest", "gemma4:latest"]
+models = ["ornith-1.5:9b", "qwen3.8:27b", "nemotron-3-super:120b"]
 queries = [
   "Ping google five times",
   "Print the last git log message",
