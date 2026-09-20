@@ -447,7 +447,7 @@ fn executes_command_and_saves_session_turn_with_captured_output() {
 }
 
 #[test]
-fn failed_command_returns_error_and_saves_no_turn() {
+fn a_failed_command_keeps_its_status_and_is_remembered() {
     let storage_dir = unique_temp_dir("cli-bot-exec-failure");
     let server =
         MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for("exit 3")]);
@@ -457,8 +457,20 @@ fn failed_command_returns_error_and_saves_no_turn() {
     let error = run_with_prompter(session_cli(config_path, vec!["fail"]), &prompter)
         .expect_err("exit 3 should fail");
 
-    assert!(error.to_string().contains("command exited with status"));
-    assert!(!storage_dir.join("sessions/default.json").exists());
+    assert_eq!(
+        error.downcast_ref::<CliBotError>(),
+        Some(&CliBotError::CommandFailed { status: Some(3) })
+    );
+    assert_eq!(
+        error.to_string(),
+        "command exited with status 3",
+        "no doubled word, and the status is the command's own"
+    );
+    // The attempt is remembered, so "why did that fail" has context.
+    let turn = &read_default_session(&storage_dir)["turns"][0];
+    assert_eq!(turn["selected_command"], "exit 3");
+    assert_eq!(turn["execution"]["executed"], true);
+    assert_eq!(turn["execution"]["exit_status"], 3);
 }
 
 /// A command in the state-changing tier that is harmless when it runs.

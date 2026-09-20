@@ -13,6 +13,23 @@ pub struct ExecutionResult {
     pub stderr: Option<String>,
 }
 
+impl ExecutionResult {
+    /// Whether the command reported failure. A non-zero exit is not an
+    /// error here: the caller has to record the attempt in session memory
+    /// before it can report one, and it needs this result to do that.
+    pub fn failed(&self) -> bool {
+        self.exit_status != Some(0)
+    }
+
+    /// The error a failed command becomes.
+    pub fn failure(&self) -> anyhow::Error {
+        CliBotError::CommandFailed {
+            status: self.exit_status,
+        }
+        .into()
+    }
+}
+
 pub fn execute(
     command: &str,
     config: &ExecutionConfig,
@@ -36,13 +53,6 @@ pub fn execute(
             eprint!("{stderr}");
         }
 
-        if !output.status.success() {
-            return Err(CliBotError::CommandFailed {
-                status: output.status.code(),
-            }
-            .into());
-        }
-
         return Ok(ExecutionResult {
             duration: start.elapsed(),
             exit_status: output.status.code(),
@@ -56,13 +66,6 @@ pub fn execute(
         .arg(command)
         .status()
         .with_context(|| format!("failed to launch shell `{}`", config.shell))?;
-
-    if !status.success() {
-        return Err(CliBotError::CommandFailed {
-            status: status.code(),
-        }
-        .into());
-    }
 
     Ok(ExecutionResult {
         duration: start.elapsed(),
@@ -133,13 +136,14 @@ mod tests {
             preferred_editor: None,
         };
 
-        match execute("exit 7", &config, false, 0) {
-            Ok(_) => panic!("command should fail"),
-            Err(error) => assert_eq!(
-                crate::error::kind_of(&error),
-                Some(CliBotError::CommandFailed { status: Some(7) })
-            ),
-        }
+        let result = execute("exit 7", &config, false, 0).expect("the shell should launch");
+
+        assert!(result.failed());
+        assert_eq!(result.exit_status, Some(7));
+        assert_eq!(
+            crate::error::kind_of(&result.failure()),
+            Some(CliBotError::CommandFailed { status: Some(7) })
+        );
     }
 
     #[test]
@@ -150,12 +154,11 @@ mod tests {
             preferred_editor: None,
         };
 
-        match execute("printf 'oops' >&2; exit 2", &config, true, 100) {
-            Ok(_) => panic!("captured command should fail"),
-            Err(error) => assert_eq!(
-                crate::error::kind_of(&error),
-                Some(CliBotError::CommandFailed { status: Some(2) })
-            ),
-        }
+        let result =
+            execute("printf 'oops' >&2; exit 2", &config, true, 100).expect("shell should launch");
+
+        assert!(result.failed());
+        assert_eq!(result.exit_status, Some(2));
+        assert_eq!(result.stderr.as_deref(), Some("oops"));
     }
 }

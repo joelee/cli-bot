@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00003-session-integrity-and-reliability"
 execution_started_at: "2026-09-20T23:18:41Z"
-execution_updated_at: "2026-09-20T23:45:28Z"
+execution_updated_at: "2026-09-20T23:47:45Z"
 execution_completed_at: null
-current_step: "PLAN-00003-STEP-04"
+current_step: "PLAN-00003-STEP-05"
 ---
 
 # Delivery Plan 00003: Session Integrity And Reliability
@@ -723,7 +723,7 @@ because its publish dry run needs a clean tree.
 | PLAN-00003-STEP-02 | completed | 2026-09-20T23:23:10Z | 2026-09-20T23:23:10Z | Verification results rows 3-5 | Permissions tighten on the next write, as D-05 specifies; a file only read keeps its mode |
 | PLAN-00003-STEP-03 | completed | 2026-09-20T23:41:47Z | 2026-09-20T23:41:47Z | Verification results rows 8-9 | A v0.4.0 config gets both defaults; asserted in `src/config.rs` |
 | PLAN-00003-STEP-04 | completed | 2026-09-20T23:45:28Z | 2026-09-20T23:45:28Z | Verification results rows 10-11 | Message-text decisions gone from production code; see Deviations for AC-07 |
-| PLAN-00003-STEP-05 | not-started | — | — | — | — |
+| PLAN-00003-STEP-05 | completed | 2026-09-20T23:47:45Z | 2026-09-20T23:47:45Z | Verification results rows 12-13 | `src/main.rs` stays at 0%: two lines, both exercised only by the real process |
 | PLAN-00003-STEP-06 | not-started | — | — | — | — |
 | PLAN-00003-STEP-07 | not-started | — | — | — | — |
 
@@ -739,6 +739,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:39:23Z | STEP-02 | User reported four core files in the repository root. They came from `MockOllamaServer`: its `Drop` opened a connection to wake the accept loop, the server thread read an empty request and panicked, and `Drop` then panicked joining it, which aborts a process that is already unwinding a failed test. The server now stops on an atomic flag, `read_http_request` returns `None` for an empty connection, and `Drop` never panics. The four core files (290 MB) were deleted | tests/mock_ollama.rs | STEP-03: configurable timeouts |
 | 2026-09-20T23:41:47Z | STEP-03 | Added `[ollama] request_timeout_seconds` (300) and `connect_timeout_seconds` (10) with serde defaults, built the client from them with `0` meaning no limit, printed both in verbose output, and documented them in `cli-bot.toml`. The mock server gained an optional reply delay, slept in slices so dropping it does not wait out a delay the client already abandoned | src/config.rs, src/llm.rs, src/lib.rs, cli-bot.toml, tests/mock_ollama.rs | STEP-04: typed errors |
 | 2026-09-20T23:45:28Z | STEP-04 | Added `src/error.rs` with `CliBotError` and `kind_of`; the planner path attaches `Planner`, `shell::execute` returns `CommandFailed` with the status, and an ended prompt returns `Cancelled`. `interactive_prompt_cancelled` and the text match in `handle_interactive_request_error` are gone, with their tests replaced by typed ones. Interactive mode now returns the prompt after a planner error, and an exhausted script in the test harness means end of input | src/error.rs, src/lib.rs, src/prompt.rs, src/shell.rs, tests/mock_ollama.rs | STEP-05: exit status and the failed turn |
+| 2026-09-20T23:47:45Z | STEP-05 | `shell::execute` now reports a non-zero exit in its result rather than as an error, the turn is saved with `executed: true` and the status, and the failure is returned afterwards. `exit_code` in `src/lib.rs` maps a command failure to its own status; `src/main.rs` calls it | src/shell.rs, src/lib.rs, src/main.rs, tests/mock_ollama.rs | STEP-06: streamed capture |
 
 ### Deviations and blockers
 
@@ -748,6 +749,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:23:10Z | STEP-02 | Two pre-existing tests asserted the parse-based pruning that D-03 replaces: `session::tests::prunes_expired_sessions` and `session_commands_list_show_and_prune` both wrote a file whose newest turn was old. Both now set the file modification time instead, which is what the approved decision prunes on | None on scope; the tests assert the approved behaviour rather than the replaced one | None; required by D-03 |
 | 2026-09-20T23:39:23Z | STEP-02 | A test-harness fix outside the seven findings: every failing integration test was aborting the process and writing a 72 MB core file, which would have kept happening through the rest of this plan. Made on the STEP-02 branch state rather than as a new step | None on scope; no production code changed, and the harness is one the plan extends at every step | None; reported to the user |
 | 2026-09-20T23:45:28Z | STEP-04 | AC-07 asks that `git grep -n "to_string().contains" src/` find nothing. No production code decides anything by message text any more, which is what REQ-05 requires, but eight test assertions still check message wording. The two that asserted an error *kind*, in `src/shell.rs`, now assert the kind itself; the rest check genuine message content, such as `--model must not be empty`, and are left | AC-07 is met for production code, which is what the finding is about | User, at hand-off |
+| 2026-09-20T23:47:45Z | STEP-05 | The step asked `shell::execute` to return `CommandFailed` and the caller to save the turn first, which cannot both hold: once `execute` returns an error the caller no longer has the status, stdout, or stderr to save. `execute` now returns `Ok` with `failed()` and `failure()` on the result, and the caller saves the turn and then returns that error | None on behaviour; REQ-07 is met in full, and the ordering it asks for is what made the change necessary | None; planner error in the step wording |
 
 ### Verification results
 
@@ -763,12 +765,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:41:47Z | STEP-03 | `just check`; the slow-planner test three times | pass | Exit 0; 154 tests; `src/llm.rs` 95.46%; total 91.21%; the timeout test took 1.02s on all three runs |
 | 2026-09-20T23:45:28Z | STEP-04 | Test first: the round-trip, interactive-recovery, and fatal-error tests before `src/error.rs` existed | fail as expected | Compilation failed on the unknown `CliBotError` |
 | 2026-09-20T23:45:28Z | STEP-04 | `just check` | pass | Exit 0; 160 tests (116 unit, 44 integration); `src/error.rs` 100%, `src/shell.rs` 90.91%, `src/lib.rs` 92.40%; total 91.51% |
+| 2026-09-20T23:47:45Z | STEP-05 | Test first: the rewritten `a_failed_command_keeps_its_status_and_is_remembered` | fails as expected | The old test asserted that no turn is saved, which REQ-07 replaces |
+| 2026-09-20T23:47:45Z | STEP-05 | `just check`; the built binary on a command exiting 42 | pass | Exit 0; 160 tests; `src/shell.rs` 97.25%; total 91.65%. The binary printed `Error: command exited with status 42` and exited 42 |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00003-REQ-01 to REQ-06, REQ-09
-- **Incomplete requirements:** REQ-07, REQ-08, REQ-10, REQ-11
+- **Completed requirements:** PLAN-00003-REQ-01 to REQ-07, REQ-09
+- **Incomplete requirements:** REQ-08, REQ-10, REQ-11
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

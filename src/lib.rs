@@ -672,6 +672,9 @@ fn run_single_request(
         config.session_memory.max_output_bytes,
     )?;
     let execution_elapsed = execution_result.duration;
+    let execution_failure = execution_result
+        .failed()
+        .then(|| execution_result.failure());
 
     if let (Some(record), Some(turn)) = (session_record.as_mut(), session_turn.as_mut())
         && config.session_memory.save_selected_commands
@@ -696,6 +699,12 @@ fn run_single_request(
             Some(execution_elapsed),
             total_start.elapsed(),
         );
+    }
+
+    // Reported only after the turn is saved, so "why did that fail" has the
+    // context it needs.
+    if let Some(failure) = execution_failure {
+        return Err(failure);
     }
 
     Ok(())

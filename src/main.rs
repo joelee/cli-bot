@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use cli_bot::{Cli, OutputStyler, run};
+use cli_bot::{Cli, OutputStyler, exit_code, run};
 
 fn main() {
     let cli = Cli::parse();
@@ -8,6 +8,7 @@ fn main() {
 
     if let Err(error) = run(cli) {
         eprintln!("{} {error:#}", output.stderr_error("Error:"));
-        std::process::exit(1);
+        // A command that ran and failed lends the shell its own status.
+        std::process::exit(exit_code(&error));
     }
 }
