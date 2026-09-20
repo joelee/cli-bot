@@ -8,10 +8,10 @@ tags:
   - claude-code
 type: delivery-plan
 plan_id: "PLAN-00003"
-plan_status: draft                 # draft | approved | cancelled
+plan_status: approved              # draft | approved | cancelled
 plan_kind: initial                 # initial | superseding
 created_at: "2026-09-20T22:53:45Z"
-approved_at: null
+approved_at: "2026-09-20T23:17:42Z"
 planner_agent: "Claude Code"
 planner_model: "anthropic/claude-opus-5"
 triggered_by: user                 # user | agent:<agent-name>
@@ -27,7 +27,7 @@ requirements_count: 11
 steps_count: 7
 acceptance_criteria_count: 17
 blocking_decisions: 0
-build_ready: false
+build_ready: true
 web_research_used: false
 confidence: high                  # high | medium | low
 
@@ -759,6 +759,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | Timestamp (UTC) | Plan status | Change | Reason | Requested/approved by |
 |---|---|---|---|---|
 | 2026-09-20T22:53:45Z | draft | Plan created | User chose two themed plans for the remaining Review 00001 findings, and this is the runtime half | User |
+| 2026-09-20T23:17:42Z | approved | Plan approved without amendment; `build_ready` set | User replied "approved" | User |
 
 ## 19. External references
 
