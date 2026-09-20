@@ -3,28 +3,28 @@ mod environment;
 mod llm;
 mod output;
 mod planner;
+mod prompt;
+pub mod safety;
 mod session;
 mod shell;
 
+use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
-use std::{env, io, io::IsTerminal};
 use std::{fmt::Write as _, fs};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use console::style;
-use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, Input, Select};
 
 use crate::config::{AppConfig, ModelsBenchmarkConfig, is_known_editor, resolve_config_path};
 use crate::environment::{PackageManagerSource, resolve_environment};
 use crate::llm::{OllamaBenchmarkMetadata, OllamaClient};
 pub use crate::output::{ColorMode, OutputStyler};
-use crate::planner::{
-    CommandPlan, PlannedCommand, command_requires_confirmation, recommended_command,
-};
+use crate::planner::{CommandPlan, PlannedCommand, recommended_command};
+use crate::prompt::describe_terminal;
+pub use crate::prompt::{DialoguerPrompter, Prompter};
+use crate::safety::{CommandRisk, classify};
 use crate::session::{SessionExecution, SessionStore, SessionTurn};
 
 #[derive(Debug, Parser)]
@@ -60,6 +60,14 @@ pub struct Cli {
     /// Control ANSI color output: auto, always, or never.
     #[arg(long, value_enum, default_value = "auto")]
     pub color: ColorMode,
+
+    /// Run state-changing commands without asking. Destructive commands are still confirmed.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
+    /// Also run destructive commands without asking. Implies --yes.
+    #[arg(long)]
+    pub i_approve_destructive_commands: bool,
 
     /// Print the selected command without executing it.
     #[arg(short = 'n', long)]
@@ -107,6 +115,12 @@ pub struct Cli {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
+    run_with_prompter(cli, &DialoguerPrompter::new())
+}
+
+/// The request flow, asking `prompter` whenever it needs the user. `run`
+/// supplies the terminal prompter; a test supplies its own.
+pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
     let total_start = Instant::now();
     let output = OutputStyler::new(cli.color.clone());
     let show_output = !cli.quiet;
@@ -217,6 +231,7 @@ pub fn run(cli: Cli) -> Result<()> {
             resolved_environment,
             verbose,
             show_output,
+            prompter,
             &output,
         );
     }
@@ -261,6 +276,22 @@ pub fn run(cli: Cli) -> Result<()> {
             ))
         );
     }
+
+    let context = RequestContext {
+        cli: &cli,
+        config: &config,
+        resolved_environment: &resolved_environment,
+        session_store: &session_store,
+        session_requested,
+        session_name,
+        planner: &planner,
+        preferred_editor: preferred_editor.as_deref(),
+        total_start,
+        show_output,
+        verbose,
+        output: &output,
+    };
+
     if cli.interactive {
         let mut next_request = resolve_request(&cli.request)?;
         let mut prompt_in_error_state = false;
@@ -273,7 +304,7 @@ pub fn run(cli: Cli) -> Result<()> {
         loop {
             let request = match next_request.take() {
                 Some(request) => request,
-                None => match prompt_for_request(prompt_in_error_state) {
+                None => match prompter.read_request(prompt_in_error_state) {
                     Ok(request) => request,
                     Err(error) if interactive_prompt_cancelled(&error) => return Ok(()),
                     Err(error) => return Err(error),
@@ -284,21 +315,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 return Ok(());
             }
 
-            let request_result = run_single_request(
-                &cli,
-                &config,
-                &resolved_environment,
-                &session_store,
-                session_requested,
-                session_name,
-                &planner,
-                preferred_editor.as_deref(),
-                &request,
-                total_start,
-                show_output,
-                verbose,
-                &output,
-            );
+            let request_result = run_single_request(&context, prompter, &request);
 
             match request_result {
                 Ok(()) => {
@@ -317,44 +334,108 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 
     let request = if cli.request.is_empty() {
-        prompt_for_request(false)?
+        prompter.read_request(false)?
     } else {
         resolve_request(&cli.request)?.expect("request parts should resolve when non-empty")
     };
 
-    run_single_request(
-        &cli,
-        &config,
-        &resolved_environment,
-        &session_store,
-        session_requested,
-        session_name,
-        &planner,
-        preferred_editor.as_deref(),
-        &request,
-        total_start,
-        show_output,
-        verbose,
-        &output,
-    )
+    run_single_request(&context, prompter, &request)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_single_request(
+/// Whether the user has already approved commands of this risk, through a
+/// flag or through `[safety] assume_yes`. `--i-approve-destructive-commands`
+/// is the only way to pre-approve the destructive tier, and it is deliberately
+/// not a configuration key: a default would silence the strong tier for good.
+fn pre_approved(risk: CommandRisk, cli: &Cli, config: &AppConfig) -> bool {
+    match risk {
+        CommandRisk::ReadOnly => true,
+        CommandRisk::StateChanging => {
+            cli.yes || cli.i_approve_destructive_commands || config.safety.assume_yes
+        }
+        CommandRisk::Destructive => cli.i_approve_destructive_commands,
+    }
+}
+
+/// The flag that would let a command of this risk run unattended.
+fn approving_flag(risk: CommandRisk) -> &'static str {
+    match risk {
+        CommandRisk::Destructive => "--i-approve-destructive-commands",
+        _ => "--yes",
+    }
+}
+
+/// Whether a command of this risk is shown to the user before it runs.
+fn requires_approval(risk: CommandRisk, safety: &crate::config::SafetyConfig) -> bool {
+    safety.require_confirmation && risk > CommandRisk::ReadOnly
+}
+
+/// Asks the user to approve `command`, using the wording and the default
+/// answer its risk deserves. A prompt that cannot be shown is an error, never
+/// an implicit yes.
+fn ask_approval(
+    risk: CommandRisk,
+    command: &str,
     cli: &Cli,
     config: &AppConfig,
-    resolved_environment: &crate::environment::ResolvedEnvironment,
-    session_store: &SessionStore,
+    prompter: &dyn Prompter,
+) -> Result<bool> {
+    if pre_approved(risk, cli, config) {
+        return Ok(true);
+    }
+
+    if !prompter.supports_dialogs() {
+        bail!(
+            "this command is {} and needs approval, but no terminal is available to ask; current terminal status: {}. Run cli-bot in an interactive terminal, pass {} to approve it without asking, or use --dry-run to see the command without running it",
+            risk.as_str(),
+            describe_terminal(),
+            approving_flag(risk)
+        )
+    }
+
+    let (prompt, default) = match risk {
+        CommandRisk::Destructive => (&config.ui.approval_prompt, false),
+        _ => (&config.ui.confirmation_prompt, true),
+    };
+
+    prompter.confirm(&format!("{prompt}\n{command}"), default)
+}
+
+/// Everything one request needs, resolved once per process.
+struct RequestContext<'a> {
+    cli: &'a Cli,
+    config: &'a AppConfig,
+    resolved_environment: &'a crate::environment::ResolvedEnvironment,
+    session_store: &'a SessionStore,
     session_requested: bool,
-    session_name: Option<&str>,
-    planner: &OllamaClient,
-    preferred_editor: Option<&str>,
-    request: &str,
+    session_name: Option<&'a str>,
+    planner: &'a OllamaClient,
+    preferred_editor: Option<&'a str>,
     total_start: Instant,
     show_output: bool,
     verbose: bool,
-    output: &OutputStyler,
+    output: &'a OutputStyler,
+}
+
+fn run_single_request(
+    context: &RequestContext<'_>,
+    prompter: &dyn Prompter,
+    request: &str,
 ) -> Result<()> {
+    let &RequestContext {
+        cli,
+        config,
+        resolved_environment,
+        session_store,
+        session_requested,
+        session_name,
+        planner,
+        preferred_editor,
+        total_start,
+        show_output,
+        verbose,
+        output,
+    } = context;
+
     let mut session_record = if session_requested {
         Some(session_store.load(session_name)?)
     } else {
@@ -447,7 +528,12 @@ fn run_single_request(
     }
 
     let auto_select_best = config.ui.auto_select_recommended || cli.auto_select_best;
-    let selected = select_command(&plan, &config.ui.selection_prompt, auto_select_best)?;
+    let selected = select_command(
+        &plan,
+        &config.ui.selection_prompt,
+        auto_select_best,
+        prompter,
+    )?;
     let mut session_turn = session_record.as_ref().map(|_| {
         SessionTurn::from_plan(
             request,
@@ -456,6 +542,24 @@ fn run_single_request(
             &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         )
     });
+
+    let risk = classify(
+        &selected.command,
+        selected.potentially_destructive,
+        &config.safety.destructive_substrings,
+        &config.safety.read_only_commands,
+        &config.safety.destructive_commands,
+    );
+    if verbose {
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!("[verbose] command risk: {}", risk.as_str()))
+        );
+    }
+    if let Some(turn) = session_turn.as_mut() {
+        turn.risk = Some(risk.as_str().to_string());
+        turn.confirmation_required = requires_approval(risk, &config.safety);
+    }
 
     if show_output && auto_select_best && plan.commands.len() > 1 && selected.recommended {
         println!(
@@ -483,7 +587,6 @@ fn run_single_request(
         {
             turn.selected_command = Some(selected.command.clone());
             turn.selected_command_rationale = selected.rationale.clone();
-            turn.confirmation_required = command_requires_confirmation(selected, &config.safety);
             turn.execution = Some(SessionExecution {
                 executed: false,
                 exit_status: None,
@@ -505,20 +608,24 @@ fn run_single_request(
         return Ok(());
     }
 
-    if command_requires_confirmation(selected, &config.safety) {
-        if let Some(turn) = session_turn.as_mut() {
-            turn.confirmation_required = true;
-        }
-        let approved = Confirm::new()
-            .with_prompt(format!(
-                "{}\n{}",
-                config.ui.approval_prompt, selected.command
-            ))
-            .default(false)
-            .interact()
-            .context("failed to capture confirmation from terminal")?;
+    if requires_approval(risk, &config.safety) {
+        let approved = ask_approval(risk, &selected.command, cli, config, prompter)?;
 
         if !approved {
+            if let (Some(record), Some(turn)) = (session_record.as_mut(), session_turn.as_mut())
+                && config.session_memory.save_selected_commands
+            {
+                turn.selected_command = Some(selected.command.clone());
+                turn.selected_command_rationale = selected.rationale.clone();
+                turn.execution = Some(SessionExecution {
+                    executed: false,
+                    exit_status: None,
+                    stdout: None,
+                    stderr: None,
+                });
+                record.push_turn(turn.clone());
+                session_store.save(record)?;
+            }
             if show_output {
                 println!("{}", output.warn("Command execution cancelled."));
             }
@@ -651,10 +758,10 @@ fn run_check(
     resolved_environment: crate::environment::ResolvedEnvironment,
     verbose: bool,
     show_output: bool,
+    prompter: &dyn Prompter,
     output: &OutputStyler,
 ) -> Result<()> {
     let mut failures = Vec::new();
-    let terminal = terminal_environment_status();
 
     if show_output {
         println!("{}", output.heading("Check results:"));
@@ -840,7 +947,7 @@ fn run_check(
     }
 
     if show_output {
-        let tone = if terminal.interactive_dialogs_supported() {
+        let tone = if prompter.supports_dialogs() {
             output.ok("ok")
         } else {
             output.warn("warn")
@@ -849,7 +956,7 @@ fn run_check(
             "{} {} ({})",
             output.key("terminal:"),
             tone,
-            terminal.describe()
+            describe_terminal()
         );
     }
 
@@ -1532,53 +1639,6 @@ fn apply_model_override(config: &mut AppConfig, model_override: Option<&str>) ->
     Ok(())
 }
 
-fn prompt_for_request(error_state: bool) -> Result<String> {
-    if !io::stdin().is_terminal() {
-        let mut request = String::new();
-        io::stdin()
-            .read_line(&mut request)
-            .context("failed to read request from stdin")?;
-
-        return normalize_request(request);
-    }
-
-    let theme = interactive_prompt_theme(error_state);
-
-    Input::<String>::with_theme(&theme)
-        .with_prompt("")
-        .validate_with(|input: &String| -> std::result::Result<(), &str> {
-            if input.trim().is_empty() {
-                Err("request must not be empty")
-            } else {
-                Ok(())
-            }
-        })
-        .interact_text()
-        .context("failed to capture request from terminal")
-        .and_then(normalize_request)
-}
-
-fn interactive_prompt_theme(error_state: bool) -> ColorfulTheme {
-    ColorfulTheme {
-        prompt_prefix: style("".to_string()).for_stderr().dim(),
-        prompt_suffix: style(format!(
-            "{}{}",
-            if error_state {
-                console::Style::new().for_stderr().red().apply_to("cli-bot")
-            } else {
-                console::Style::new()
-                    .for_stderr()
-                    .cyan()
-                    .apply_to("cli-bot")
-            },
-            console::Style::new().for_stderr().dim().apply_to(">")
-        )),
-        prompt_style: console::Style::new().dim(),
-        values_style: console::Style::new().for_stderr(),
-        ..ColorfulTheme::default()
-    }
-}
-
 fn interactive_entry_hint(output: &OutputStyler) -> String {
     format!(
         "Enter {} or press {} to exit Interactive Mode.",
@@ -1612,7 +1672,7 @@ fn handle_interactive_request_error(
     Err(anyhow::Error::msg(error.to_string()))
 }
 
-fn normalize_request(request: String) -> Result<String> {
+pub(crate) fn normalize_request(request: String) -> Result<String> {
     let request = request.trim();
 
     if request.is_empty() {
@@ -1634,6 +1694,7 @@ fn select_command<'a>(
     plan: &'a CommandPlan,
     prompt: &str,
     auto_select_best: bool,
+    prompter: &dyn Prompter,
 ) -> Result<&'a PlannedCommand> {
     if plan.commands.is_empty() {
         bail!("planner returned no commands")
@@ -1651,11 +1712,10 @@ fn select_command<'a>(
         return Ok(&plan.commands[0]);
     }
 
-    let terminal = terminal_environment_status();
-    if !terminal.interactive_dialogs_supported() {
+    if !prompter.supports_dialogs() {
         bail!(
             "interactive selection requires TTY stdin/stdout and a usable TERM; current terminal status: {}. Use --auto-select-best or run cli-bot in an interactive terminal",
-            terminal.describe()
+            describe_terminal()
         )
     }
 
@@ -1664,12 +1724,7 @@ fn select_command<'a>(
         .iter()
         .map(PlannedCommand::label)
         .collect::<Vec<_>>();
-    let selection = Select::new()
-        .with_prompt(prompt)
-        .items(&items)
-        .default(0)
-        .interact()
-        .context("failed to capture command selection from terminal")?;
+    let selection = prompter.select(prompt, &items, 0)?;
 
     Ok(&plan.commands[selection])
 }
@@ -1705,44 +1760,6 @@ fn duration_to_ms(duration: Duration) -> u128 {
     duration.as_millis()
 }
 
-fn terminal_environment_status() -> TerminalEnvironmentStatus {
-    TerminalEnvironmentStatus {
-        stdin_tty: io::stdin().is_terminal(),
-        stdout_tty: io::stdout().is_terminal(),
-        stderr_tty: io::stderr().is_terminal(),
-        term: env::var("TERM").ok().filter(|term| !term.trim().is_empty()),
-    }
-}
-
-struct TerminalEnvironmentStatus {
-    stdin_tty: bool,
-    stdout_tty: bool,
-    stderr_tty: bool,
-    term: Option<String>,
-}
-
-impl TerminalEnvironmentStatus {
-    fn interactive_dialogs_supported(&self) -> bool {
-        self.stdin_tty
-            && self.stdout_tty
-            && self.stderr_tty
-            && self
-                .term
-                .as_deref()
-                .is_some_and(|term| !term.is_empty() && term != "dumb")
-    }
-
-    fn describe(&self) -> String {
-        format!(
-            "stdin_tty={}, stdout_tty={}, stderr_tty={}, TERM={}",
-            self.stdin_tty,
-            self.stdout_tty,
-            self.stderr_tty,
-            self.term.as_deref().unwrap_or("unset")
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1752,15 +1769,14 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        BenchmarkHostInfo, Cli, ModelBenchmarkResult, TerminalEnvironmentStatus,
-        apply_model_override, benchmark_output_is_stdout, collect_benchmark_host_info,
-        command_output, compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell,
-        format_bytes_from_kib, format_bytes_from_mib, format_command_plan_response,
-        format_success_rate, handle_interactive_request_error, handle_session_command,
-        interactive_entry_hint, interactive_prompt_cancelled, interactive_prompt_theme,
-        normalize_request, parse_mem_total_kib, print_benchmark_report,
-        render_models_benchmark_markdown, resolve_request, run_models_benchmark, select_command,
-        should_quit_interactive,
+        BenchmarkHostInfo, Cli, ModelBenchmarkResult, apply_model_override,
+        benchmark_output_is_stdout, collect_benchmark_host_info, command_output,
+        compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell, format_bytes_from_kib,
+        format_bytes_from_mib, format_command_plan_response, format_success_rate,
+        handle_interactive_request_error, handle_session_command, interactive_entry_hint,
+        interactive_prompt_cancelled, normalize_request, parse_mem_total_kib,
+        print_benchmark_report, render_models_benchmark_markdown, resolve_request,
+        run_models_benchmark, select_command, should_quit_interactive,
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
@@ -1770,6 +1786,7 @@ mod tests {
     use crate::llm::OllamaBenchmarkMetadata;
     use crate::output::{ColorMode, OutputStyler};
     use crate::planner::{CommandPlan, PlannedCommand};
+    use crate::prompt::DialoguerPrompter;
     use crate::session::{SessionRecord, SessionStore, SessionTurn};
 
     #[test]
@@ -1829,7 +1846,8 @@ mod tests {
             ],
         };
 
-        let selected = select_command(&plan, "Choose", true).expect("selection should succeed");
+        let selected = select_command(&plan, "Choose", true, &DialoguerPrompter::new())
+            .expect("selection should succeed");
 
         assert_eq!(selected.command, "ping -c 5 google.com");
     }
@@ -1857,7 +1875,8 @@ mod tests {
             ],
         };
 
-        let selected = select_command(&plan, "Choose", true).expect("selection should succeed");
+        let selected = select_command(&plan, "Choose", true, &DialoguerPrompter::new())
+            .expect("selection should succeed");
 
         assert_eq!(selected.command, "git log -1 --pretty=%B");
     }
@@ -1897,31 +1916,6 @@ mod tests {
     }
 
     #[test]
-    fn terminal_status_accepts_interactive_terminal() {
-        let status = TerminalEnvironmentStatus {
-            stdin_tty: true,
-            stdout_tty: true,
-            stderr_tty: true,
-            term: Some("xterm-ghostty".into()),
-        };
-
-        assert!(status.interactive_dialogs_supported());
-        assert!(status.describe().contains("TERM=xterm-ghostty"));
-    }
-
-    #[test]
-    fn terminal_status_rejects_non_interactive_terminal() {
-        let status = TerminalEnvironmentStatus {
-            stdin_tty: false,
-            stdout_tty: false,
-            stderr_tty: false,
-            term: Some("xterm-ghostty".into()),
-        };
-
-        assert!(!status.interactive_dialogs_supported());
-    }
-
-    #[test]
     fn select_command_rejects_empty_command_list() {
         let plan = CommandPlan {
             summary: None,
@@ -1929,7 +1923,8 @@ mod tests {
             commands: vec![],
         };
 
-        let error = select_command(&plan, "Choose", true).expect_err("selection should fail");
+        let error = select_command(&plan, "Choose", true, &DialoguerPrompter::new())
+            .expect_err("selection should fail");
 
         assert!(error.to_string().contains("planner returned no commands"));
     }
@@ -2002,17 +1997,6 @@ mod tests {
             .expect_err("non-command failures should still be fatal");
 
         assert!(propagated.to_string().contains("failed to contact Ollama"));
-    }
-
-    #[test]
-    fn interactive_prompt_theme_switches_prompt_color_on_error() {
-        let normal_rendered = format!("{}", interactive_prompt_theme(false).prompt_suffix);
-        let error_rendered = format!("{}", interactive_prompt_theme(true).prompt_suffix);
-        let normal = console::strip_ansi_codes(&normal_rendered);
-        let error = console::strip_ansi_codes(&error_rendered);
-
-        assert_eq!(normal, "cli-bot>");
-        assert_eq!(error, "cli-bot>");
     }
 
     #[test]
@@ -2171,6 +2155,7 @@ mod tests {
             selected_command: Some("fd gitconfig ~".into()),
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: None,
         });
@@ -2264,12 +2249,16 @@ mod tests {
             safety: SafetyConfig {
                 require_confirmation: true,
                 destructive_substrings: vec![],
+                read_only_commands: Vec::new(),
+                destructive_commands: Vec::new(),
+                assume_yes: false,
             },
             ui: UiConfig {
                 selection_prompt: "Choose".into(),
                 approval_prompt: "Approve?".into(),
                 show_command_before_execution: true,
                 auto_select_recommended: false,
+                confirmation_prompt: "Run this command?".into(),
             },
             execution: ExecutionConfig {
                 shell: "/bin/sh".into(),
@@ -2301,6 +2290,8 @@ mod tests {
             models_benchmark: None,
             auto_select_best: false,
             color: ColorMode::Never,
+            yes: false,
+            i_approve_destructive_commands: false,
             dry_run: false,
             print_plan: false,
             benchmark: false,

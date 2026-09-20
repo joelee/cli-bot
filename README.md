@@ -263,7 +263,19 @@ nvim ~/.gitconfig
 cli-bot "Delete the target directory"
 ```
 
-If the selected command is destructive, `cli-bot` asks for explicit approval before execution.
+`cli-bot` classifies the selected command before running it:
+
+- **read-only** commands, such as `ls -la` or `git log`, run straight away
+- **state-changing** commands are shown first and confirmed, with `Enter` meaning yes
+- **destructive** commands are shown with a stronger prompt, and `Enter` means no
+
+Anything `cli-bot` does not recognise is confirmed rather than run, so a
+command that is new, misspelled, or impossible to parse never runs unasked.
+
+For scripts, `--yes` approves the state-changing tier, and
+`--i-approve-destructive-commands` approves the destructive tier as well.
+Without a terminal and without one of those flags, a command that needs
+approval fails instead of running.
 
 ### Unresolved Fallback
 
@@ -433,9 +445,11 @@ cli-bot
 
 `cli-bot` does not blindly trust model output.
 
-- commands can be marked `potentially_destructive` by the LLM
-- destructive substring rules in config provide an additional safety net
-- risky commands require explicit user approval before execution
+- a command runs unasked only when every part of it is a recognised read-only program
+- classification works on the parsed command, so flag order, spacing, quoting, pipes, redirections, command substitution, and a `sudo` prefix cannot change the answer
+- destructive commands get a stronger prompt that defaults to no
+- commands marked `potentially_destructive` by the LLM are treated as destructive
+- the read-only and destructive lists live in `cli-bot.toml`, so you can extend either
 - if multiple commands are returned, the user can choose the right one
 
 This keeps the tool useful without pretending shell execution is risk-free.

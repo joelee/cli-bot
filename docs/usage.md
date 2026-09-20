@@ -107,6 +107,64 @@ When `session_memory.capture_command_output = true`, command stdout and stderr a
 
 If `session_memory.retention_days` is set, old session files are pruned automatically on startup.
 
+## Approving Commands
+
+A read-only command runs straight away:
+
+```bash
+cli-bot "show me the last five commits"
+# Selected command: git log -5 --oneline
+# <output>
+```
+
+Anything else is shown and confirmed first. A state-changing command
+defaults to yes, so `Enter` runs it:
+
+```bash
+cli-bot "install ripgrep"
+# Selected command: paru -S ripgrep
+# Run this command?
+# paru -S ripgrep [Y/n]
+```
+
+A destructive command defaults to no, so `Enter` declines:
+
+```bash
+cli-bot "delete the target directory"
+# Selected command: rm -rf target
+# This command may be destructive. Approve execution?
+# rm -rf target [y/N]
+```
+
+### Unattended Runs
+
+`--yes` approves the state-changing tier, which is what a script normally
+needs:
+
+```bash
+cli-bot --yes "create a build directory"
+```
+
+Destructive commands still stop, even with `--yes`. To let those through as
+well, pass the longer flag, which has no short form and no configuration
+key:
+
+```bash
+cli-bot --yes --i-approve-destructive-commands "clean the docker cache"
+```
+
+Without a terminal and without the right flag, a command that needs approval
+fails rather than running:
+
+```bash
+echo "delete the build output" | cli-bot
+# Error: this command is destructive and needs approval, but no terminal is
+# available to ask; ... use --i-approve-destructive-commands ...
+```
+
+`[safety] assume_yes = true` makes `--yes` the default for every run. There
+is no such setting for the destructive tier.
+
 ## Dry Run
 
 ```bash
@@ -296,4 +354,7 @@ cli-bot "Edit my git config file"
 - Package-related requests use the resolved environment and effective package manager.
 - The LLM is required to return `potentially_destructive: true | false` for each command.
 - The LLM is also asked to mark the best command with `recommended: true`.
-- If the selected command is marked or detected as destructive, `cli-bot` requests explicit approval.
+- A command runs unasked only when every program in it matches `safety.read_only_commands`; everything else is confirmed first.
+- Destructive commands are confirmed with a prompt that defaults to no; state-changing ones default to yes.
+- `--yes` and `safety.assume_yes` pre-approve the state-changing tier; only `--i-approve-destructive-commands` pre-approves the destructive tier.
+- A command that cannot be parsed, or that redirects output or uses `$(...)`, is never treated as read-only.

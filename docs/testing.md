@@ -52,7 +52,10 @@ just coverage-lcov  # target/coverage/lcov.info
 
 All three run the unit tests and the mocked-Ollama integration tests with coverage instrumentation. Files under `tests/` are not counted.
 
-Code that needs a terminal is not covered: the `dialoguer` selection and confirmation prompts, the interactive loop, and `src/main.rs`.
+Code that needs a terminal is not covered: the three `dialoguer` methods in
+`src/prompt.rs`, the interactive loop, and `src/main.rs`. Everything that
+decides *whether* to prompt is covered, because the prompts themselves sit
+behind the `Prompter` trait.
 
 ## Coverage In CI
 
@@ -145,3 +148,8 @@ just check
 - Mocked planner failures: no JSON, invalid plan JSON, empty command list, HTTP error status, undecodable body
 - Mocked `--check` failures: missing model, failing service, missing editor
 - Mocked `--models-benchmark` report with a failing model, a fallback, and a trailing report path
+- Command classification: every command of the safety review's table, read-only cases, wrapper stripping, quoting, pipes, redirections, command substitution, and unparsable input
+- Approval through a scripted `Prompter`: a read-only command running unasked, a state-changing command confirmed with yes as the default, a destructive command confirmed with no as the default and not run when declined
+- `--yes`, `--i-approve-destructive-commands`, and `[safety] assume_yes`, including that neither the flag-free config key nor `--yes` silences the destructive tier
+- Failing closed with no terminal, with the error naming the tier and the flag that would allow the command
+- `require_confirmation = false` and `destructive_substrings` keeping their pre-v0.4.0 meaning

@@ -347,6 +347,10 @@ pub struct SessionTurn {
     pub selected_command_rationale: Option<String>,
     #[serde(default)]
     pub confirmation_required: bool,
+    /// How the command was classified: read-only, state-changing, or
+    /// destructive. Absent in sessions written before v0.4.0.
+    #[serde(default)]
+    pub risk: Option<String>,
     #[serde(default)]
     pub text_response: Option<String>,
     #[serde(default)]
@@ -379,6 +383,7 @@ impl SessionTurn {
             selected_command: None,
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: None,
         }
@@ -400,6 +405,7 @@ impl SessionTurn {
             selected_command: None,
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: Some(response.to_string()),
             execution: None,
         }
@@ -565,6 +571,7 @@ mod tests {
             selected_command: Some("fd gitconfig ~".into()),
             selected_command_rationale: Some("Fast local search".into()),
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: Some(SessionExecution {
                 executed: true,
@@ -612,6 +619,7 @@ mod tests {
             selected_command: Some("ping -c 5 google.com".into()),
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: None,
         });
@@ -657,6 +665,7 @@ mod tests {
             selected_command: Some("ping -c 5 google.com".into()),
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: None,
         });
@@ -702,6 +711,7 @@ mod tests {
             selected_command: Some("true".into()),
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: None,
         });
@@ -758,6 +768,7 @@ mod tests {
             selected_command: Some("make test".into()),
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: Some("done".into()),
             execution: Some(SessionExecution {
                 executed: true,
