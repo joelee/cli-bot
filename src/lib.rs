@@ -167,6 +167,13 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
         eprintln!(
             "{}",
             output.stderr_dim(&format!(
+                "[verbose] ollama timeouts: request {}s, connect {}s (0 = none)",
+                config.ollama.request_timeout_seconds, config.ollama.connect_timeout_seconds
+            ))
+        );
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!(
                 "[verbose] environment os: {}",
                 resolved_environment.os.as_str()
             ))
@@ -2259,6 +2266,8 @@ mod tests {
                 temperature: 0.0,
                 use_chat_api: true,
                 system_prompt: "Return JSON only".into(),
+                request_timeout_seconds: 300,
+                connect_timeout_seconds: 10,
             },
             environment: EnvironmentConfig::default(),
             safety: SafetyConfig {

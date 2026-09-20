@@ -466,6 +466,31 @@ fn absent_rm_command(directory: &Path) -> String {
 }
 
 #[test]
+fn a_slow_planner_reports_the_timeout_rather_than_a_decoding_failure() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![plan_for("ls -la").after(Duration::from_secs(3))],
+    );
+    let config_path = ConfigOptions {
+        request_timeout_seconds: Some(1),
+        ..ConfigOptions::default()
+    }
+    .write(server.base_url());
+    let mut cli = sample_cli(config_path, vec!["list files"]);
+    cli.quiet = false;
+    cli.verbose = true;
+
+    let error = run(cli).expect_err("the request should time out");
+    let message = format!("{error:#}");
+
+    assert!(message.contains("failed to call Ollama"), "{message}");
+    assert!(
+        message.to_lowercase().contains("timed out") || message.to_lowercase().contains("timeout"),
+        "the cause should name the timeout: {message}"
+    );
+}
+
+#[test]
 fn an_unreadable_session_file_stops_nothing() {
     let storage_dir = unique_temp_dir("cli-bot-corrupt-session");
     let sessions = storage_dir.join("sessions");
@@ -1424,6 +1449,8 @@ struct ConfigOptions {
     /// `false` restores the behaviour of versions before v0.4.0: nothing is
     /// ever confirmed.
     no_confirmation: bool,
+    /// Seconds; `None` leaves the key out so the default applies.
+    request_timeout_seconds: Option<u64>,
 }
 
 impl ConfigOptions {
@@ -1462,7 +1489,7 @@ base_url = "{base_url}"
 model = "lfm2:latest"
 temperature = 0.0
 use_chat_api = {use_chat_api}
-system_prompt = "Return JSON only"
+{timeout_line}system_prompt = "Return JSON only"
 
 [environment]
 os = "auto"
@@ -1506,6 +1533,10 @@ queries = {benchmark_queries:?}
 "#,
             base_url = base_url,
             use_chat_api = self.use_chat_api,
+            timeout_line = self
+                .request_timeout_seconds
+                .map(|seconds| format!("request_timeout_seconds = {seconds}\n"))
+                .unwrap_or_default(),
             assume_yes = self.assume_yes,
             require_confirmation = !self.no_confirmation,
             preferred_editor = preferred_editor,
@@ -1563,6 +1594,15 @@ impl MockOllamaServer {
                     continue;
                 };
                 capture.lock().expect("capture should lock").push(request);
+                // Slept in slices, so dropping the server does not wait
+                // out a delay the client has already given up on.
+                let deadline = std::time::Instant::now() + responses[index].delay;
+                while std::time::Instant::now() < deadline {
+                    if stopping.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
                 let payload = responses[index].body.clone();
                 let http = format!(
                     "HTTP/1.1 {} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1603,6 +1643,8 @@ impl Drop for MockOllamaServer {
 struct MockResponse {
     status: u16,
     body: String,
+    /// How long the server waits before replying, for timeout tests.
+    delay: Duration,
 }
 
 impl MockResponse {
@@ -1614,7 +1656,14 @@ impl MockResponse {
         Self {
             status,
             body: body.to_string(),
+            delay: Duration::ZERO,
         }
+    }
+
+    /// Replies only after `delay`, so a test can drive a client timeout.
+    fn after(mut self, delay: Duration) -> Self {
+        self.delay = delay;
+        self
     }
 
     /// A `/api/generate` reply whose generated text is `text`.
