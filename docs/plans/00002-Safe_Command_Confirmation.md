@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00002-safe-command-confirmation"
 execution_started_at: "2026-09-20T20:33:31Z"
-execution_updated_at: "2026-09-20T20:49:08Z"
+execution_updated_at: "2026-09-20T20:50:31Z"
 execution_completed_at: null
-current_step: "PLAN-00002-STEP-07"
+current_step: "PLAN-00002-STEP-08"
 ---
 
 # Delivery Plan 00002: Safe Command Confirmation
@@ -834,7 +834,7 @@ both directly.
 | PLAN-00002-STEP-05 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results row 8 | Committed together with STEP-06; see Deviations |
 | PLAN-00002-STEP-06 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results rows 9-10 | Declined commands now save a turn; see Deviations |
 | PLAN-00002-STEP-07 | completed | 2026-09-20T20:49:08Z | 2026-09-20T20:49:08Z | Verification results rows 11-12 | Both flags and the fail-closed path are covered by integration tests |
-| PLAN-00002-STEP-08 | not-started | — | — | — | — |
+| PLAN-00002-STEP-08 | completed | 2026-09-20T20:50:31Z | 2026-09-20T20:50:31Z | Verification results rows 13-14 | REQ-12 partially met; see Deviations |
 | PLAN-00002-STEP-09 | not-started | — | — | — | — |
 
 Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
@@ -850,6 +850,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:43:12Z | STEP-04 | Wrote `src/safety.rs`: `CommandRisk`, a quote-aware parser (segments, redirections, `$(...)` and backticks, wrapper stripping), the built-in destructive rule table, and `classify`. All fourteen commands of the REV-00001-MAJ-01 table reach the tier AC-01 requires | src/safety.rs | STEP-05: configuration |
 | 2026-09-20T20:47:20Z | STEP-06 | Added `[safety] read_only_commands`, `destructive_commands`, `assume_yes` and `[ui] confirmation_prompt` with serde defaults and shipped values in `cli-bot.toml`; replaced `planner::command_requires_confirmation` with `safety::classify`; added `requires_approval` and `ask_approval`; the session turn now records the tier | src/config.rs, cli-bot.toml, src/lib.rs, src/planner.rs, src/session.rs | STEP-07: the pre-approval flags |
 | 2026-09-20T20:49:08Z | STEP-07 | Added `--yes`/`-y` and `--i-approve-destructive-commands`; `pre_approved` resolves flags and `[safety] assume_yes`; the no-terminal error now names the tier and the flag that would allow the command | src/lib.rs, tests/mock_ollama.rs | STEP-08: complete the test matrix |
+| 2026-09-20T20:50:31Z | STEP-08 | Added the selection test (second of two chosen, approved, and saved), `require_confirmation = false` back-compat, a `destructive_substrings` match on a quoted argument, and an unparsable command being confirmed rather than run | tests/mock_ollama.rs | STEP-09: documentation, version, release draft |
 
 ### Deviations and blockers
 
@@ -862,6 +863,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:47:20Z | STEP-06 | STEP-05 and STEP-06 landed in one commit. `just lint` denies dead code, so the new configuration fields cannot be committed in a step before the step that reads them | None on scope; both steps' tasks and verifications were carried out in full, in order | None; planner decision |
 | 2026-09-20T20:47:20Z | STEP-06 | The new destructive-tier test found that a declined command saved no session turn at all, so REQ-04 ("saves its session turn as not executed") was not met by the code being replaced. The declined path now saves the turn, as the dry-run path already did | A behaviour improvement inside REQ-04; a follow-up such as "why did I decline that" now has context | None; required by REQ-04 |
 | 2026-09-20T20:49:08Z | STEP-07 | AC-17 asks that the `--help` diff show only the two new flags. It also shows clap re-aligning every description column, because `--i-approve-destructive-commands` is longer than any previous flag. No wording changed | Cosmetic; the flag list differs by exactly the two new entries | None; planner decision |
+| 2026-09-20T20:50:31Z | STEP-08 | REQ-12 asks for 90% line coverage in both new modules. `src/safety.rs` reaches 93.85%, but `src/prompt.rs` stays at 71.65%: its 36 uncovered lines are the bodies of `read_request`, `select`, and `confirm`, which call `dialoguer` and need a real terminal. A test that reached them would open a prompt and hang, which `AGENTS.md` forbids. Isolating them is the point of the trait: the untestable code is now 36 lines in one module instead of being spread through the request flow | REQ-12 is met for the module carrying the safety decision and for the 80% gate; the `src/prompt.rs` floor needs a pseudo-terminal harness, which is not in this plan | User, at hand-off: whether a pty-backed test is worth a dev-dependency |
 
 ### Verification results
 
@@ -879,12 +881,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:47:20Z | STEP-06 | `just check`; `--help` against the STEP-01 reference; a v0.3.2 session file loads | pass | Exit 0; 135 tests; total 90.21% (was 88.93%); `src/safety.rs` 93.85%; `--help` byte-identical; `risk` is `#[serde(default)]` |
 | 2026-09-20T20:49:08Z | STEP-07 | Test first: the four flag and no-terminal tests before the flags existed | fail as expected | Compilation failed on the unknown `Cli` fields |
 | 2026-09-20T20:49:08Z | STEP-07 | `just check`; `cargo run -- --help` | pass | Exit 0; 139 tests; total 90.31%; `--help` shows `-y, --yes` and `--i-approve-destructive-commands` and nothing else new |
+| 2026-09-20T20:50:31Z | STEP-08 | Uncovered-branch survey before the step | recorded | `src/prompt.rs` lines 46-87, the three `dialoguer` call bodies; `src/safety.rs` already 93.85% |
+| 2026-09-20T20:50:31Z | STEP-08 | `just check`; `cargo test --test mock_ollama` three times | pass | Exit 0; 143 tests (104 unit, 39 integration); identical on all three runs, no flakiness; total 90.62%, `src/lib.rs` 90.62%, `src/safety.rs` 93.85% |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00002-REQ-01 to REQ-07
-- **Incomplete requirements:** REQ-08 to REQ-12
+- **Completed requirements:** PLAN-00002-REQ-01 to REQ-08; REQ-12 for `src/safety.rs` and the gate
+- **Incomplete requirements:** REQ-09 to REQ-11; REQ-12 for `src/prompt.rs`
 - **Outstanding blockers:** None. See Deviations
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
