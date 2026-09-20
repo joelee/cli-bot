@@ -6,6 +6,11 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- The `Release` workflow now creates the GitHub release with its binaries attached in one call. A release is immutable once created, so the previous second `gh release upload` step was refused with `HTTP 422`, which left v0.4.0 with release notes and no binaries
+- The Windows release binary is no longer built or attached until `REV-00001-MED-08` is fixed: it cannot start, because config resolution needs `HOME`, the session store needs `HOME` or `XDG_STATE_HOME`, and the default shell is `/bin/sh`
+
 ## v0.4.0 - 2026-09-20T22:05:10Z
 
 ### Changed
