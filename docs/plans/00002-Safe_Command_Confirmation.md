@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00002-safe-command-confirmation"
 execution_started_at: "2026-09-20T20:33:31Z"
-execution_updated_at: "2026-09-20T20:36:52Z"
+execution_updated_at: "2026-09-20T20:38:12Z"
 execution_completed_at: null
-current_step: "PLAN-00002-STEP-02"
+current_step: "PLAN-00002-STEP-03"
 ---
 
 # Delivery Plan 00002: Safe Command Confirmation
@@ -829,7 +829,7 @@ both directly.
 |---|---|---|---|---|---|
 | PLAN-00002-STEP-01 | completed | 2026-09-20T20:33:31Z | 2026-09-20T20:33:31Z | Verification results rows 1-2 | Baseline identical to plan section 3 |
 | PLAN-00002-STEP-02 | completed | 2026-09-20T20:36:52Z | 2026-09-20T20:36:52Z | Verification results row 3 | Behaviour unchanged; `run_check` keeps a `too_many_arguments` allow until STEP-03 |
-| PLAN-00002-STEP-03 | not-started | — | — | — | — |
+| PLAN-00002-STEP-03 | completed | 2026-09-20T20:38:12Z | 2026-09-20T20:38:12Z | Verification results rows 4-5 | One deviation recorded: the pre-existing allow in the out-of-scope `src/llm.rs` |
 | PLAN-00002-STEP-04 | not-started | — | — | — | — |
 | PLAN-00002-STEP-05 | not-started | — | — | — | — |
 | PLAN-00002-STEP-06 | not-started | — | — | — | — |
@@ -846,12 +846,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 |---|---|---|---|---|
 | 2026-09-20T20:33:31Z | STEP-01 | Execution started on the approved plan; baseline matches plan section 3 exactly (88.93%) | Verification results rows 1-2 | STEP-02: Prompter trait |
 | 2026-09-20T20:36:52Z | STEP-02 | Created `src/prompt.rs` with `Prompter`, `DialoguerPrompter`, and `describe_terminal`; moved `prompt_for_request`, `interactive_prompt_theme`, and `TerminalEnvironmentStatus` there unchanged; added `run_with_prompter`, threaded `&dyn Prompter` through `run_check`, the interactive loop, `run_single_request`, and `select_command`; added `ScriptedPrompter` and one seam test | src/prompt.rs, src/lib.rs, tests/mock_ollama.rs | STEP-03: RequestContext |
+| 2026-09-20T20:38:12Z | STEP-03 | `RequestContext<'a>` built once in `run_with_prompter`; `run_single_request` now takes `(&RequestContext, &dyn Prompter, &str)`; the allow is gone from both `run_single_request` and `run_check` (7 arguments, within the threshold) | src/lib.rs | STEP-04: the classifier |
 
 ### Deviations and blockers
 
 | Timestamp (UTC) | Step | Deviation or blocker | Impact | Decision required from |
 |---|---|---|---|---|
 | 2026-09-20T20:36:52Z | STEP-02 | Clippy rejects test helpers that no step has used yet, so `ScriptedPrompter` ships with only the constructor and recorder that STEP-02 needs; `with_confirmations`, `with_selections`, `with_requests`, and `without_dialogs` are added by the steps that first use them | None on scope; the helper grows step by step instead of arriving complete | None; planner decision |
+| 2026-09-20T20:38:12Z | STEP-03 | AC-11 asks that `git grep -n "too_many_arguments" src/` find nothing, but `src/llm.rs:24` carries a pre-existing allow on `OllamaClient::plan_commands` (8 arguments), and `src/llm.rs` is not in the plan's scope (section 4). REQ-02, which asks only that the allow on `run_single_request` be removed, is met in full, and the grep is clean for `src/lib.rs` | AC-11 is met for the file the requirement is about; the `src/llm.rs` allow is untouched and reported at hand-off | User, at hand-off: whether to clean `src/llm.rs` in a follow-up |
 
 ### Verification results
 
@@ -860,13 +862,15 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:33:31Z | STEP-01 | `just ci` | pass | Exit 0; 118 tests pass; lines 3813, missed 422, 88.93%; `cargo deny`, links, publish dry run, actionlint clean |
 | 2026-09-20T20:33:31Z | STEP-01 | Reference outputs saved outside the repository | recorded | `--help` (27 lines) for AC-17; the REV-00001-MAJ-01 table with the expected tier per command for AC-01 |
 | 2026-09-20T20:36:52Z | STEP-02 | `just check`; `cargo run -- --help` against the STEP-01 reference | pass | Exit 0; 121 tests pass (93 unit, 28 integration); lines 3865, missed 426, 88.98%; `--help` byte-identical |
+| 2026-09-20T20:38:12Z | STEP-03 | Test first: removed the allow and ran `just lint` | fails as expected | `error: this function has too many arguments (14/7)` at `src/lib.rs:351` |
+| 2026-09-20T20:38:12Z | STEP-03 | `just check`; `git grep -n too_many_arguments src/lib.rs`; `--help` against the STEP-01 reference | pass | Exit 0; 121 tests; lines 3853, missed 412, 89.31%; no allow left in `src/lib.rs`; `--help` byte-identical |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00002-REQ-01
-- **Incomplete requirements:** REQ-02 to REQ-12
-- **Outstanding blockers:** None
+- **Completed requirements:** PLAN-00002-REQ-01, REQ-02
+- **Incomplete requirements:** REQ-03 to REQ-12
+- **Outstanding blockers:** None. AC-11 is narrowed to `src/lib.rs`; see Deviations
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
 

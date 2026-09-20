@@ -268,6 +268,22 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
             ))
         );
     }
+
+    let context = RequestContext {
+        cli: &cli,
+        config: &config,
+        resolved_environment: &resolved_environment,
+        session_store: &session_store,
+        session_requested,
+        session_name,
+        planner: &planner,
+        preferred_editor: preferred_editor.as_deref(),
+        total_start,
+        show_output,
+        verbose,
+        output: &output,
+    };
+
     if cli.interactive {
         let mut next_request = resolve_request(&cli.request)?;
         let mut prompt_in_error_state = false;
@@ -291,22 +307,7 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
                 return Ok(());
             }
 
-            let request_result = run_single_request(
-                &cli,
-                &config,
-                &resolved_environment,
-                &session_store,
-                session_requested,
-                session_name,
-                &planner,
-                preferred_editor.as_deref(),
-                &request,
-                total_start,
-                show_output,
-                verbose,
-                prompter,
-                &output,
-            );
+            let request_result = run_single_request(&context, prompter, &request);
 
             match request_result {
                 Ok(()) => {
@@ -330,41 +331,45 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
         resolve_request(&cli.request)?.expect("request parts should resolve when non-empty")
     };
 
-    run_single_request(
-        &cli,
-        &config,
-        &resolved_environment,
-        &session_store,
-        session_requested,
-        session_name,
-        &planner,
-        preferred_editor.as_deref(),
-        &request,
-        total_start,
-        show_output,
-        verbose,
-        prompter,
-        &output,
-    )
+    run_single_request(&context, prompter, &request)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_single_request(
-    cli: &Cli,
-    config: &AppConfig,
-    resolved_environment: &crate::environment::ResolvedEnvironment,
-    session_store: &SessionStore,
+/// Everything one request needs, resolved once per process.
+struct RequestContext<'a> {
+    cli: &'a Cli,
+    config: &'a AppConfig,
+    resolved_environment: &'a crate::environment::ResolvedEnvironment,
+    session_store: &'a SessionStore,
     session_requested: bool,
-    session_name: Option<&str>,
-    planner: &OllamaClient,
-    preferred_editor: Option<&str>,
-    request: &str,
+    session_name: Option<&'a str>,
+    planner: &'a OllamaClient,
+    preferred_editor: Option<&'a str>,
     total_start: Instant,
     show_output: bool,
     verbose: bool,
+    output: &'a OutputStyler,
+}
+
+fn run_single_request(
+    context: &RequestContext<'_>,
     prompter: &dyn Prompter,
-    output: &OutputStyler,
+    request: &str,
 ) -> Result<()> {
+    let &RequestContext {
+        cli,
+        config,
+        resolved_environment,
+        session_store,
+        session_requested,
+        session_name,
+        planner,
+        preferred_editor,
+        total_start,
+        show_output,
+        verbose,
+        output,
+    } = context;
+
     let mut session_record = if session_requested {
         Some(session_store.load(session_name)?)
     } else {
@@ -656,7 +661,6 @@ fn handle_session_command(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_check(
     config_path: PathBuf,
     config: AppConfig,
