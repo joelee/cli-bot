@@ -4,7 +4,7 @@ repos:
   - repo: local
     hooks:
       - id: just-check
-        name: just check (fmt, clippy, scripts, tests, coverage, build, package)
+        name: just check (fmt, clippy, scripts, links, tests, coverage, build)
         entry: just check
         language: system
         pass_filenames: false

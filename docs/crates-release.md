@@ -1,153 +1,112 @@
 # crates.io Release
 
-This document explains how to manually publish a new `cli-bot` release to crates.io.
+Releases are tag-driven and published by the `Release` GitHub workflow, never
+by hand from a developer machine. This document walks the flow defined in
+`AGENTS.md` § Release workflow; see also [Homebrew](homebrew.md).
 
-## Release Order
+## One-time setup
 
-Recommended order for a new release:
+In the GitHub repository settings:
 
-1. Update the code and docs
-2. Bump the version in `Cargo.toml`
-3. Run local verification
-4. Package and publish to crates.io
-5. Update the Homebrew formula in `homebrew-oss`
+1. Create a `release` environment with a required reviewer (the project
+   owner). The workflow's publish job waits for that approval.
+2. Add a `CARGO_REGISTRY_TOKEN` secret to the `release` environment, holding
+   an API token from `https://crates.io/settings/tokens`.
 
-## Update The Version
+## Release order
+
+1. The delivering plan bumps the version in `Cargo.toml` and `Cargo.lock`
+   and writes the `docs/release/vX.Y.Z.md` draft
+2. Local verification: `just ci`
+3. Finalise the release records in one `release: vX.Y.Z - <top feature>`
+   commit
+4. Pull request into `main`; checks must pass
+5. The owner tags the merge commit `vX.Y.Z` and pushes the tag
+6. The Release workflow verifies, builds, and publishes after the owner
+   approves the pending `release` deployment
+7. Update the Homebrew tap formula with `scripts/update-homebrew-formula.sh`
+
+## Update the version
 
 Edit `Cargo.toml`:
 
 ```toml
 [package]
-version = "0.2.1"
+version = "0.3.3"
 ```
 
-Use the next semver version you want to release.
-
-## Run Local Verification
-
-Before publishing, run:
+## Run local verification
 
 ```bash
-just check
+just ci
 ```
 
-This runs the format check, clippy, the script syntax check, the tests, the 80% coverage gate, a locked build, and `cargo package`. See the [Developer Guide](developer-guide.md).
+This runs the format check, clippy, the script syntax check, the Markdown
+link check, the tests, the 80% coverage gate, a locked build, the
+supply-chain audit, a publish dry run, and the workflow lint. See the
+[Developer Guide](developer-guide.md).
 
-## Build The Publishable Package
+## Finalise the release records
 
-`just check` already packages and verifies the crate. To do only that step:
+In one commit, `release: vX.Y.Z - <top feature>`:
+
+- `CHANGELOG.md`: rename `Unreleased` to `vX.Y.Z - <UTC timestamp of this
+  commit>` and add a fresh `Unreleased` above it.
+- `docs/release/vX.Y.Z.md`: remove the draft line; name the date, plan, and
+  PR, not a commit hash; use absolute links pinned to the tag, because the
+  GitHub release page cannot resolve relative ones.
+- `README.md` and other docs: remove pre-release wording.
+
+Then check the tag and records locally:
 
 ```bash
-just package
+scripts/check-release-tag.sh vX.Y.Z
 ```
-
-Inspect the packaged contents if needed:
-
-```bash
-just package-list
-```
-
-## Authenticate With crates.io
-
-If this machine is not already authenticated:
-
-```bash
-cargo login
-```
-
-You will need a crates.io API token from:
-
-- `https://crates.io/settings/tokens`
 
 ## Publish
 
-Publish the new version:
+The owner pushes the tag:
 
 ```bash
-cargo publish
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
-Or use the local release helper script after pushing the GitHub tag/release:
+The Release workflow then:
 
-```bash
-just release v0.2.1
-```
+- verifies the tag, the version, and the release records
+  (`scripts/check-release-tag.sh`)
+- verifies the package builds as a crates.io dependency
+  (`cargo publish --dry-run --locked`)
+- builds binaries for Linux, macOS, and Windows
+- waits for the owner to approve the pending `release` deployment
+- publishes to crates.io with the `CARGO_REGISTRY_TOKEN` secret
+- creates the GitHub release from `docs/release/vX.Y.Z.md` and attaches the
+  binaries
 
-This runs `scripts/release.sh`. The script:
+A published crate version can only be yanked, never replaced. Never create
+the GitHub release by hand.
 
-- loads `.env` if present
-- reads `HOMEBREW_FORMULA_FILE` from the environment or `.env`
-- verifies the requested tag matches `Cargo.toml`
-- runs `just check`
-- publishes to crates.io
-- waits for the crate URL to become available
-- computes the checksum from the published crate artifact
-- updates the Homebrew formula file with the new crate URL and published checksum
-
-Important:
-
-- do not use the SHA256 of the local `target/package/*.crate` file for Homebrew
-- Homebrew should use the checksum of the crate downloaded from crates.io
-- `scripts/release.sh` now computes the checksum from the published crates.io artifact automatically
-
-Example `.env`:
-
-```bash
-HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
-```
-
-## Verify The Release
-
-Check the published crate metadata:
-
-```bash
-curl -s https://crates.io/api/v1/crates/cli-bot | jq .
-```
-
-Or open the crate page:
+## Verify the release
 
 - `https://crates.io/crates/cli-bot`
+- `https://github.com/joelee/cli-bot/releases`
 
-## Get The Published Checksum
+## After publishing
 
-After publishing, the Homebrew formula will need the new checksum.
-
-You can fetch it with:
-
-```bash
-curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
-```
-
-## After Publishing
-
-After the new crate version is live:
-
-1. Update `https://github.com/joelee/homebrew-oss/Formula/cli-bot.rb`
-2. Change the crate `url` to the new version
-3. Change the `sha256` to the published checksum
-4. Push the Homebrew tap update
-
-See [Homebrew](homebrew.md) for the Homebrew side of the release.
-
-## Typical Manual Release Session
-
-Example for version `0.2.1`:
+Once crates.io has the version, run from this repository:
 
 ```bash
-# edit Cargo.toml
-just check
-cargo publish
-curl -s https://crates.io/api/v1/crates/cli-bot | jq -r '.versions[0].checksum'
+scripts/update-homebrew-formula.sh vX.Y.Z
 ```
 
-Or with the helper script:
-
-```bash
-just release v0.2.1
-```
+The script points `Formula/cli-bot.rb` in the tap (`../homebrew-oss`) at the
+published crate and its crates.io checksum. Commit the change on a branch in
+the tap, never on its `main`; the owner pushes it and merges once the tap's
+macOS formula test passes.
 
 ## Notes
 
-- crates.io publishes source code, not prebuilt binaries
+- crates.io publishes source code, not prebuilt binaries; the GitHub release
+  carries those
 - users install from crates.io with `cargo install cli-bot`
 - publish to crates.io before updating Homebrew

@@ -1,8 +1,8 @@
 # Homebrew
 
-This document explains how to manually update the Homebrew formula for `cli-bot` after publishing a new release.
+This document explains how to update the Homebrew formula for `cli-bot` after publishing a new release.
 
-If you want the `cli-bot` repository to update the formula automatically after `cargo publish`, see [release.sh](../scripts/release.sh) and [crates.io Release](crates-release.md).
+The release flow is tag-driven; see [crates.io Release](crates-release.md). Once crates.io has the new version, `scripts/update-homebrew-formula.sh` updates the formula automatically.
 
 The Homebrew tap for this project lives at:
 
@@ -80,20 +80,19 @@ git commit -m "cli-bot 0.2.1"
 git push
 ```
 
-## Using The Release Script
+## Using The Formula Update Script
 
-If `HOMEBREW_FORMULA_FILE` points to the local formula file, `cli-bot` can update the formula automatically during release:
-
-```bash
-export HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
-just release v0.2.1
-```
-
-You can also place that variable in `.env` at the root of the `cli-bot` repository:
+From the `cli-bot` repository, after crates.io has the new version:
 
 ```bash
-HOMEBREW_FORMULA_FILE="$HOME/Projects/MyOSS/homebrew-oss/Formula/cli-bot.rb"
+scripts/update-homebrew-formula.sh v0.2.1
 ```
+
+The script points `Formula/cli-bot.rb` in the tap (default
+`../homebrew-oss`; pass its path to override) at the published crate and its
+crates.io checksum, and changes nothing else. Commit the change on a branch
+in the tap, never on its `main`; the owner pushes it and merges once the
+tap's macOS formula test passes.
 
 ## Recommended Validation On macOS
 

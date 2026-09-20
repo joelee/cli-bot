@@ -39,10 +39,6 @@ is large, so each needs its own plan.
   output above Debug.
 - **Rustdoc for the public API.** `Cli`, `run`, `OutputStyler`, and
   `ColorMode` are public; most items have no rustdoc.
-- **Release workflow in CI.** Publish to crates.io from a tag-triggered
-  workflow with an approval gate, keep release notes in
-  `docs/release/vX.Y.Z.md`, and reduce `scripts/release.sh` to the Homebrew
-  formula update.
 
 ### Fixes found in the handover review (2026-09-17)
 
@@ -80,8 +76,9 @@ is large, so each needs its own plan.
   interactive loop, and `src/main.rs` are not covered (88.93% overall at
   PLAN-00001). Injectable prompts (above) would close the gap.
 - **macOS CI job.** cli-bot supports macOS, but CI runs on Linux only.
-- **Supply-chain audit.** Add `cargo deny` with a `deny.toml`, as passalong
-  has, and a `just audit` recipe.
+- **Release environment setup.** Create the `release` GitHub environment
+  with a required reviewer and the `CARGO_REGISTRY_TOKEN` secret; the
+  Release workflow needs both before the next version can publish.
 - **Stale benchmark reports.** `docs/models-benchmark-report.md` and
   `docs/models-benchmark-report1.md` are two generated reports; keep one, or
   move them under `docs/benchmarks/` with dated names.

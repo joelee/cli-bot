@@ -72,21 +72,20 @@ The repository includes these workflows:
 
 ### Release Checks
 
-`release-checks.yml` does two things:
-
-1. Runs release checks on pull requests and pushes to `main` and `feature/**` branches
-2. Prepares a publishable `.crate` artifact on version tags like `v0.1.0` or manual workflow dispatch
-
-The verification job runs:
+`release-checks.yml` runs `just ci` on pull requests and pushes to `main`
+and `feature/**` branches:
 
 ```bash
-just check
-just package-list
+just ci
 ```
 
-`just check` includes the 80% line-coverage gate, so a pull request that lowers coverage below it fails here.
+That is every check (format, lint, scripts, links, tests, the 80%
+line-coverage gate, build), the supply-chain audit, the publish dry run,
+and the workflow lint. A pull request that lowers coverage below the gate
+fails here.
 
-On matching tags or manual runs, the workflow also uploads the packaged crate from `target/package/*.crate` as a GitHub Actions artifact.
+Version tags are handled by the Release workflow; see
+[crates.io Release](crates-release.md).
 
 ### Unit Coverage
 

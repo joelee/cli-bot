@@ -54,7 +54,7 @@ This assumes:
 - the Ollama service is running locally
 - `cli-bot` can create a default config file on first run if needed
 
-See [Install Ollama](docs/install-ollama.md) and [Configuration](docs/configuration.md) for the full setup.
+See [Install Ollama](https://github.com/joelee/cli-bot/blob/main/docs/install-ollama.md) and [Configuration](https://github.com/joelee/cli-bot/blob/main/docs/configuration.md) for the full setup.
 
 If you encounter any issues, run `cli-bot --check` to identify the issues. 
 
@@ -78,7 +78,7 @@ The repository also includes dedicated coverage automation:
 - Codecov upload from the coverage workflow
 - GitHub Pages publishing for the HTML coverage site at `https://joelee.github.io/cli-bot/`
 
-See [Testing](docs/testing.md) for the local script and CI details.
+See [Testing](https://github.com/joelee/cli-bot/blob/main/docs/testing.md) for the local script and CI details.
 
 ## Session Memory
 
@@ -273,7 +273,7 @@ If a request cannot be safely resolved into a shell command, `cli-bot` can fall 
 
 `cli-bot` requires a running Ollama endpoint. Before using the CLI, install Ollama, start the local service, and pull the model you want to use.
 
-See [Install Ollama](docs/install-ollama.md) for a step-by-step setup guide.
+See [Install Ollama](https://github.com/joelee/cli-bot/blob/main/docs/install-ollama.md) for a step-by-step setup guide.
 
 ### From Homebrew on macOS
 
@@ -375,7 +375,7 @@ Example:
 ollama pull ornith-1.5:9b
 ```
 
-Detailed instructions are in [Install Ollama](docs/install-ollama.md).
+Detailed instructions are in [Install Ollama](https://github.com/joelee/cli-bot/blob/main/docs/install-ollama.md).
 
 ## Configuration
 
@@ -450,7 +450,7 @@ cli-bot --config ./cli-bot.toml --model qwen3.8:27b --benchmark --dry-run "Ping 
 
 The current default model selection is documented in the published benchmark report:
 
-- [Models Benchmark Report (v0.3.2)](docs/models-benchmark-report-v0.3.2.md)
+- [Models Benchmark Report (v0.3.2)](https://github.com/joelee/cli-bot/blob/main/docs/models-benchmark-report-v0.3.2.md)
 
 That report captures comparative results across multiple models and is the basis for choosing `ornith-1.5:9b` as the default model.
 
@@ -540,19 +540,19 @@ If `NO_COLOR` is set, color output is disabled.
 
 ## Documentation
 
-- [Changelog](CHANGELOG.md)
-- [Installation](docs/installation.md)
-- [Install Ollama](docs/install-ollama.md)
-- [Homebrew](docs/homebrew.md)
-- [crates.io Release](docs/crates-release.md)
-- [Publishing](docs/publishing.md)
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
-- [Session Memory Design](docs/session-memory.md)
-- [Usage](docs/usage.md)
-- [Testing](docs/testing.md)
-- [Developer Guide](docs/developer-guide.md)
-- [Backlog](docs/backlog.md)
+- [Changelog](https://github.com/joelee/cli-bot/blob/main/CHANGELOG.md)
+- [Installation](https://github.com/joelee/cli-bot/blob/main/docs/installation.md)
+- [Install Ollama](https://github.com/joelee/cli-bot/blob/main/docs/install-ollama.md)
+- [Homebrew](https://github.com/joelee/cli-bot/blob/main/docs/homebrew.md)
+- [crates.io Release](https://github.com/joelee/cli-bot/blob/main/docs/crates-release.md)
+- [Publishing](https://github.com/joelee/cli-bot/blob/main/docs/publishing.md)
+- [Architecture](https://github.com/joelee/cli-bot/blob/main/docs/architecture.md)
+- [Configuration](https://github.com/joelee/cli-bot/blob/main/docs/configuration.md)
+- [Session Memory Design](https://github.com/joelee/cli-bot/blob/main/docs/session-memory.md)
+- [Usage](https://github.com/joelee/cli-bot/blob/main/docs/usage.md)
+- [Testing](https://github.com/joelee/cli-bot/blob/main/docs/testing.md)
+- [Developer Guide](https://github.com/joelee/cli-bot/blob/main/docs/developer-guide.md)
+- [Backlog](https://github.com/joelee/cli-bot/blob/main/docs/backlog.md)
 
 ## Developer Setup
 
@@ -566,4 +566,4 @@ just check          # format, lint, tests, 80% coverage gate, build, package
 
 `just check` is the verification command; the Git hook and CI run the same recipe. If you use the `pre-commit` framework instead, `pre-commit install` enables `.pre-commit-config.yaml`, which also runs `just check`.
 
-See the [Developer Guide](docs/developer-guide.md) for every recipe and the contribution workflow.
+See the [Developer Guide](https://github.com/joelee/cli-bot/blob/main/docs/developer-guide.md) for every recipe and the contribution workflow.
