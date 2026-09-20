@@ -33,13 +33,49 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 
 ### `[safety]`
 
-- `require_confirmation`: require approval before risky commands run
-- `destructive_substrings`: substring patterns that force confirmation
+- `require_confirmation`: the master switch. Setting it to `false` runs every command without asking, including destructive ones
+- `assume_yes`: pre-approve the state-changing tier, as `--yes` does. There is deliberately no key for the destructive tier; that needs `--i-approve-destructive-commands` on the command line
+- `read_only_commands`: commands that run without asking. Each entry matches whole leading words, so `git log` covers `git log --oneline` but not `git logs`
+- `destructive_commands`: extra commands for the destructive tier, matched the same way
+- `destructive_substrings`: text that forces the destructive tier wherever it appears, matched case-insensitively. Kept from earlier versions, and it can fire on a quoted argument
+
+#### How a command is classified
+
+`cli-bot` parses the command into the programs it runs, following `;`, `&&`,
+`||`, and pipes, honouring quotes, and stripping wrappers such as `sudo`,
+`env`, `nice`, and `xargs`. It then decides, in this order:
+
+1. the planner marked the command `potentially_destructive` → destructive
+2. the text matches a `destructive_substrings` entry → destructive
+3. a built-in rule or a `destructive_commands` entry matches → destructive
+4. the command redirects output or uses `$(...)` → state-changing
+5. every program matches `read_only_commands` → read-only
+6. otherwise → state-changing
+
+A command that cannot be parsed is never read-only.
+
+#### Built-in destructive rules
+
+Some programs are only dangerous with certain flags or subcommands, which a
+list of names cannot express, so these rules live in the code:
+
+| Program | Destructive when |
+|---|---|
+| `rm` | `-r`, `-R`, `-f`, `--recursive`, or `--force` |
+| `find` | `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fls`, `-fprint` |
+| `chmod`, `chown`, `chgrp` | `-R` or `--recursive` |
+| `git` | `clean`; `reset --hard`; `push --force`; `branch -D` |
+| `docker`, `podman` | any `prune`; `rmi`; `volume`/`container`/`image`/`network rm` |
+| `systemctl`, `service` | `stop`, `disable`, `mask` |
+| `shred`, `dd`, `mkfs*`, `fdisk`, `parted`, `mkswap`, `wipefs`, `sgdisk`, `truncate` | always |
+| `shutdown`, `reboot`, `poweroff`, `halt`, `init` | always |
+| `kill`, `killall`, `pkill`, `userdel`, `groupdel` | always |
 
 ### `[ui]`
 
 - `selection_prompt`: prompt shown when multiple command choices are available
-- `approval_prompt`: prompt shown before executing risky commands
+- `approval_prompt`: prompt shown before a destructive command
+- `confirmation_prompt`: prompt shown before a state-changing command
 - `show_command_before_execution`: print the command before it runs
 - `auto_select_recommended`: automatically use the LLM-recommended command when multiple choices are returned
 
@@ -86,6 +122,9 @@ preferred_package_manager = "auto"
 
 [safety]
 require_confirmation = true
+assume_yes = false
+read_only_commands = ["ls", "cat", "git status", "git log"]
+destructive_commands = []
 destructive_substrings = ["rm -rf", "git reset --hard"]
 
 [ui]

@@ -48,8 +48,8 @@ is large, so each needs its own plan.
 From [Review 00001](reviews/00001-Main_Current_Code_State.md), which
 replaces the handover-review list kept here before. `REV-00001-MAJ-01`
 (destructive commands run without confirmation) and `REV-00001-MED-06`
-(the approval and selection paths have no test) are not listed, because
-PLAN-00002 covers them. The "middle tier" for state-changing commands,
+(the approval and selection paths have no test) are not listed: PLAN-00002
+fixed both in v0.4.0. The "middle tier" for state-changing commands,
 formerly a candidate feature here, is part of MAJ-01.
 
 Medium, in the order the review recommends:
@@ -139,6 +139,12 @@ across the four workflows.
 
 ### Tooling
 
+- **A pseudo-terminal test harness.** `src/prompt.rs` sits at 71.65% line
+  coverage because the bodies of `read_request`, `select`, and `confirm`
+  call `dialoguer` and need a real terminal; a test that reached them would
+  open a prompt and hang. A pty-backed harness, which needs a
+  dev-dependency, would close the last uncovered part of the request flow.
+  See PLAN-00002 STEP-08.
 - **Duplicated helpers.** `is_executable_file` exists in `src/config.rs`
   and `src/environment.rs`; byte-limited truncation exists in
   `src/shell.rs` and `src/session.rs`.
