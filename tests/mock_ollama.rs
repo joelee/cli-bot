@@ -266,6 +266,12 @@ impl ScriptedPrompter {
         }
     }
 
+    /// No terminal: the flow must fail rather than assume an answer.
+    fn without_dialogs(mut self) -> Self {
+        self.supports_dialogs = false;
+        self
+    }
+
     fn with_confirmations(mut self, answers: impl IntoIterator<Item = bool>) -> Self {
         self.confirmations = Mutex::new(answers.into_iter().collect());
         self
@@ -416,6 +422,148 @@ fn failed_command_returns_error_and_saves_no_turn() {
 
     assert!(error.to_string().contains("command exited with status"));
     assert!(!storage_dir.join("sessions/default.json").exists());
+}
+
+/// A command in the state-changing tier that is harmless when it runs.
+fn touch_command(directory: &Path) -> (String, PathBuf) {
+    let target = directory.join("created-by-the-test");
+    (format!("touch {}", path_to_string(&target)), target)
+}
+
+/// A command in the destructive tier that is harmless when it runs: the
+/// path does not exist, and `rm -f` succeeds on a missing path.
+fn absent_rm_command(directory: &Path) -> String {
+    format!("rm -fr {}", path_to_string(&directory.join("absent")))
+}
+
+#[test]
+fn yes_approves_the_ordinary_tier_but_not_the_destructive_one() {
+    let storage_dir = unique_temp_dir("cli-bot-flag-yes");
+    fs::create_dir_all(&storage_dir).expect("storage dir should exist");
+    let (command, target) = touch_command(&storage_dir);
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            plan_for(&command),
+            plan_for(&absent_rm_command(&storage_dir)),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+
+    let mut ordinary = session_cli(config_path.clone(), vec!["create the file"]);
+    ordinary.yes = true;
+    let quiet = ScriptedPrompter::silent();
+    run_with_prompter(ordinary, &quiet).expect("--yes should approve the ordinary tier");
+    assert_eq!(quiet.asked(), Vec::new());
+    assert!(target.is_file());
+
+    let mut destructive = session_cli(config_path, vec!["delete it"]);
+    destructive.yes = true;
+    let asked = ScriptedPrompter::silent().with_confirmations([false]);
+    run_with_prompter(destructive, &asked).expect("a declined command is not an error");
+    assert_eq!(
+        asked.confirmations_shown().len(),
+        1,
+        "--yes must not silence the destructive tier"
+    );
+}
+
+#[test]
+fn the_destructive_flag_approves_both_tiers() {
+    let storage_dir = unique_temp_dir("cli-bot-flag-destructive");
+    fs::create_dir_all(&storage_dir).expect("storage dir should exist");
+    let (command, target) = touch_command(&storage_dir);
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            plan_for(&absent_rm_command(&storage_dir)),
+            plan_for(&command),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent();
+
+    for request in ["delete it", "create the file"] {
+        let mut cli = session_cli(config_path.clone(), vec![request]);
+        cli.i_approve_destructive_commands = true;
+        run_with_prompter(cli, &prompter).expect("both tiers should run unattended");
+    }
+
+    assert_eq!(prompter.asked(), Vec::new());
+    assert!(target.is_file(), "the flag implies --yes");
+}
+
+#[test]
+fn assume_yes_in_the_config_behaves_as_the_yes_flag() {
+    let storage_dir = unique_temp_dir("cli-bot-assume-yes");
+    fs::create_dir_all(&storage_dir).expect("storage dir should exist");
+    let (command, target) = touch_command(&storage_dir);
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            plan_for(&command),
+            plan_for(&absent_rm_command(&storage_dir)),
+        ],
+    );
+    let config_path = ConfigOptions {
+        assume_yes: true,
+        ..ConfigOptions::with_session(&storage_dir)
+    }
+    .write(server.base_url());
+
+    let quiet = ScriptedPrompter::silent();
+    run_with_prompter(
+        session_cli(config_path.clone(), vec!["create the file"]),
+        &quiet,
+    )
+    .expect("assume_yes should approve the ordinary tier");
+    assert_eq!(quiet.asked(), Vec::new());
+    assert!(target.is_file());
+
+    let asked = ScriptedPrompter::silent().with_confirmations([false]);
+    run_with_prompter(session_cli(config_path, vec!["delete it"]), &asked)
+        .expect("a declined command is not an error");
+    assert_eq!(
+        asked.confirmations_shown().len(),
+        1,
+        "no config key may pre-approve the destructive tier"
+    );
+}
+
+#[test]
+fn without_a_terminal_an_unapproved_command_fails_and_runs_nothing() {
+    let storage_dir = unique_temp_dir("cli-bot-no-terminal");
+    fs::create_dir_all(&storage_dir).expect("storage dir should exist");
+    let (command, target) = touch_command(&storage_dir);
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            plan_for(&command),
+            plan_for(&absent_rm_command(&storage_dir)),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent().without_dialogs();
+
+    let error = run_with_prompter(
+        session_cli(config_path.clone(), vec!["create the file"]),
+        &prompter,
+    )
+    .expect_err("a state-changing command needs approval");
+    let message = format!("{error:#}");
+    assert!(message.contains("state-changing"), "{message}");
+    assert!(message.contains("--yes"), "{message}");
+    assert!(!target.exists(), "nothing may run without approval");
+
+    let error = run_with_prompter(session_cli(config_path, vec!["delete it"]), &prompter)
+        .expect_err("a destructive command needs approval");
+    let message = format!("{error:#}");
+    assert!(message.contains("destructive"), "{message}");
+    assert!(
+        message.contains("--i-approve-destructive-commands"),
+        "{message}"
+    );
+    assert_eq!(prompter.asked(), Vec::new(), "no prompt may be attempted");
 }
 
 #[test]
@@ -1009,6 +1157,8 @@ fn sample_cli(config_path: PathBuf, request: Vec<&str>) -> Cli {
         models_benchmark: None,
         auto_select_best: false,
         color: ColorMode::Never,
+        yes: false,
+        i_approve_destructive_commands: false,
         dry_run: true,
         print_plan: false,
         benchmark: false,
@@ -1054,6 +1204,7 @@ struct ConfigOptions {
     include_command_output_in_prompt: bool,
     benchmark_models: Vec<&'static str>,
     benchmark_queries: Vec<&'static str>,
+    assume_yes: bool,
 }
 
 impl ConfigOptions {
@@ -1101,6 +1252,7 @@ preferred_package_manager = "auto"
 
 [safety]
 require_confirmation = true
+assume_yes = {assume_yes}
 destructive_substrings = ["rm -rf"]
 
 [ui]
@@ -1135,6 +1287,7 @@ queries = {benchmark_queries:?}
 "#,
             base_url = base_url,
             use_chat_api = self.use_chat_api,
+            assume_yes = self.assume_yes,
             preferred_editor = preferred_editor,
             session_enabled = self.session_enabled,
             storage_dir = storage_dir,

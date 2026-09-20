@@ -61,6 +61,14 @@ pub struct Cli {
     #[arg(long, value_enum, default_value = "auto")]
     pub color: ColorMode,
 
+    /// Run state-changing commands without asking. Destructive commands are still confirmed.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
+    /// Also run destructive commands without asking. Implies --yes.
+    #[arg(long)]
+    pub i_approve_destructive_commands: bool,
+
     /// Print the selected command without executing it.
     #[arg(short = 'n', long)]
     pub dry_run: bool,
@@ -334,6 +342,28 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
     run_single_request(&context, prompter, &request)
 }
 
+/// Whether the user has already approved commands of this risk, through a
+/// flag or through `[safety] assume_yes`. `--i-approve-destructive-commands`
+/// is the only way to pre-approve the destructive tier, and it is deliberately
+/// not a configuration key: a default would silence the strong tier for good.
+fn pre_approved(risk: CommandRisk, cli: &Cli, config: &AppConfig) -> bool {
+    match risk {
+        CommandRisk::ReadOnly => true,
+        CommandRisk::StateChanging => {
+            cli.yes || cli.i_approve_destructive_commands || config.safety.assume_yes
+        }
+        CommandRisk::Destructive => cli.i_approve_destructive_commands,
+    }
+}
+
+/// The flag that would let a command of this risk run unattended.
+fn approving_flag(risk: CommandRisk) -> &'static str {
+    match risk {
+        CommandRisk::Destructive => "--i-approve-destructive-commands",
+        _ => "--yes",
+    }
+}
+
 /// Whether a command of this risk is shown to the user before it runs.
 fn requires_approval(risk: CommandRisk, safety: &crate::config::SafetyConfig) -> bool {
     safety.require_confirmation && risk > CommandRisk::ReadOnly
@@ -345,20 +375,20 @@ fn requires_approval(risk: CommandRisk, safety: &crate::config::SafetyConfig) ->
 fn ask_approval(
     risk: CommandRisk,
     command: &str,
+    cli: &Cli,
     config: &AppConfig,
     prompter: &dyn Prompter,
 ) -> Result<bool> {
-    // `assume_yes` covers the ordinary tier only; the destructive tier is
-    // never pre-approved from configuration.
-    if config.safety.assume_yes && risk != CommandRisk::Destructive {
+    if pre_approved(risk, cli, config) {
         return Ok(true);
     }
 
     if !prompter.supports_dialogs() {
         bail!(
-            "this command is {} and needs approval, but no terminal is available to ask; current terminal status: {}. Run cli-bot in an interactive terminal, or use --dry-run to see the command without running it",
+            "this command is {} and needs approval, but no terminal is available to ask; current terminal status: {}. Run cli-bot in an interactive terminal, pass {} to approve it without asking, or use --dry-run to see the command without running it",
             risk.as_str(),
-            describe_terminal()
+            describe_terminal(),
+            approving_flag(risk)
         )
     }
 
@@ -579,7 +609,7 @@ fn run_single_request(
     }
 
     if requires_approval(risk, &config.safety) {
-        let approved = ask_approval(risk, &selected.command, config, prompter)?;
+        let approved = ask_approval(risk, &selected.command, cli, config, prompter)?;
 
         if !approved {
             if let (Some(record), Some(turn)) = (session_record.as_mut(), session_turn.as_mut())
@@ -2260,6 +2290,8 @@ mod tests {
             models_benchmark: None,
             auto_select_best: false,
             color: ColorMode::Never,
+            yes: false,
+            i_approve_destructive_commands: false,
             dry_run: false,
             print_plan: false,
             benchmark: false,

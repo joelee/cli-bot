@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00002-safe-command-confirmation"
 execution_started_at: "2026-09-20T20:33:31Z"
-execution_updated_at: "2026-09-20T20:47:20Z"
+execution_updated_at: "2026-09-20T20:49:08Z"
 execution_completed_at: null
-current_step: "PLAN-00002-STEP-06"
+current_step: "PLAN-00002-STEP-07"
 ---
 
 # Delivery Plan 00002: Safe Command Confirmation
@@ -833,7 +833,7 @@ both directly.
 | PLAN-00002-STEP-04 | completed | 2026-09-20T20:43:12Z | 2026-09-20T20:43:12Z | Verification results rows 6-7 | `src/safety.rs` 93.85%; module made public, see Deviations |
 | PLAN-00002-STEP-05 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results row 8 | Committed together with STEP-06; see Deviations |
 | PLAN-00002-STEP-06 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results rows 9-10 | Declined commands now save a turn; see Deviations |
-| PLAN-00002-STEP-07 | not-started | — | — | — | — |
+| PLAN-00002-STEP-07 | completed | 2026-09-20T20:49:08Z | 2026-09-20T20:49:08Z | Verification results rows 11-12 | Both flags and the fail-closed path are covered by integration tests |
 | PLAN-00002-STEP-08 | not-started | — | — | — | — |
 | PLAN-00002-STEP-09 | not-started | — | — | — | — |
 
@@ -849,6 +849,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:38:12Z | STEP-03 | `RequestContext<'a>` built once in `run_with_prompter`; `run_single_request` now takes `(&RequestContext, &dyn Prompter, &str)`; the allow is gone from both `run_single_request` and `run_check` (7 arguments, within the threshold) | src/lib.rs | STEP-04: the classifier |
 | 2026-09-20T20:43:12Z | STEP-04 | Wrote `src/safety.rs`: `CommandRisk`, a quote-aware parser (segments, redirections, `$(...)` and backticks, wrapper stripping), the built-in destructive rule table, and `classify`. All fourteen commands of the REV-00001-MAJ-01 table reach the tier AC-01 requires | src/safety.rs | STEP-05: configuration |
 | 2026-09-20T20:47:20Z | STEP-06 | Added `[safety] read_only_commands`, `destructive_commands`, `assume_yes` and `[ui] confirmation_prompt` with serde defaults and shipped values in `cli-bot.toml`; replaced `planner::command_requires_confirmation` with `safety::classify`; added `requires_approval` and `ask_approval`; the session turn now records the tier | src/config.rs, cli-bot.toml, src/lib.rs, src/planner.rs, src/session.rs | STEP-07: the pre-approval flags |
+| 2026-09-20T20:49:08Z | STEP-07 | Added `--yes`/`-y` and `--i-approve-destructive-commands`; `pre_approved` resolves flags and `[safety] assume_yes`; the no-terminal error now names the tier and the flag that would allow the command | src/lib.rs, tests/mock_ollama.rs | STEP-08: complete the test matrix |
 
 ### Deviations and blockers
 
@@ -860,6 +861,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:43:12Z | STEP-04 | One test expectation written in the same step was wrong: `echo 'rm -fr /'` only prints a string, so `ReadOnly` is right and the implementation was correct. The test now asserts `ReadOnly`, with `echo 'rm -rf /'` asserting that the legacy substring list still fires on quoted text | None; the AC-01 table is untouched | None; planner decision |
 | 2026-09-20T20:47:20Z | STEP-06 | STEP-05 and STEP-06 landed in one commit. `just lint` denies dead code, so the new configuration fields cannot be committed in a step before the step that reads them | None on scope; both steps' tasks and verifications were carried out in full, in order | None; planner decision |
 | 2026-09-20T20:47:20Z | STEP-06 | The new destructive-tier test found that a declined command saved no session turn at all, so REQ-04 ("saves its session turn as not executed") was not met by the code being replaced. The declined path now saves the turn, as the dry-run path already did | A behaviour improvement inside REQ-04; a follow-up such as "why did I decline that" now has context | None; required by REQ-04 |
+| 2026-09-20T20:49:08Z | STEP-07 | AC-17 asks that the `--help` diff show only the two new flags. It also shows clap re-aligning every description column, because `--i-approve-destructive-commands` is longer than any previous flag. No wording changed | Cosmetic; the flag list differs by exactly the two new entries | None; planner decision |
 
 ### Verification results
 
@@ -875,13 +877,15 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:47:20Z | STEP-05 | Unit tests: a v0.3.2 config parses and yields the shipped defaults; the new keys round-trip; `cli-bot.toml` parses | pass | Three new tests in `src/config.rs` |
 | 2026-09-20T20:47:20Z | STEP-06 | Test first: the three tier tests against the old policy | fail as expected | Also `failed_command_returns_error_and_saves_no_turn` failed, because `exit 3` is state-changing and the run had no terminal |
 | 2026-09-20T20:47:20Z | STEP-06 | `just check`; `--help` against the STEP-01 reference; a v0.3.2 session file loads | pass | Exit 0; 135 tests; total 90.21% (was 88.93%); `src/safety.rs` 93.85%; `--help` byte-identical; `risk` is `#[serde(default)]` |
+| 2026-09-20T20:49:08Z | STEP-07 | Test first: the four flag and no-terminal tests before the flags existed | fail as expected | Compilation failed on the unknown `Cli` fields |
+| 2026-09-20T20:49:08Z | STEP-07 | `just check`; `cargo run -- --help` | pass | Exit 0; 139 tests; total 90.31%; `--help` shows `-y, --yes` and `--i-approve-destructive-commands` and nothing else new |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00002-REQ-01 to REQ-05; REQ-04 pending its flag interaction in STEP-07
-- **Incomplete requirements:** REQ-06 to REQ-12
-- **Outstanding blockers:** None. See Deviations for AC-11, the public `safety` module, and the merged steps
+- **Completed requirements:** PLAN-00002-REQ-01 to REQ-07
+- **Incomplete requirements:** REQ-08 to REQ-12
+- **Outstanding blockers:** None. See Deviations
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
 
