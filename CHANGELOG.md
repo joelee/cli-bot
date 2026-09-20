@@ -6,6 +6,19 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+
+- `[ollama] request_timeout_seconds` and `connect_timeout_seconds`, so a slow model load no longer fails after reqwest's fixed 30 seconds (`REV-00001-MED-01`)
+
+### Changed
+
+- Session files are written atomically and, on Unix, owner-only (`REV-00001-MED-02`, `REV-00001-MED-05`)
+- An unreadable session file no longer stops every invocation: pruning uses file modification times, and listing skips and reports files it cannot parse (`REV-00001-MED-02`)
+- Interactive mode survives a planner error instead of ending the session, and end of input exits cleanly; error kinds are told apart by type rather than by matching message text (`REV-00001-MED-03`)
+- A command that exits non-zero keeps its exit status, is saved in session memory, and is reported without the doubled word in `command exited with status exit status: 3` (`REV-00001-LOW-01`)
+- With `capture_command_output = true`, commands keep the terminal's standard input and their output is streamed while it is captured, so editors, pagers and `sudo` keep working (`REV-00001-MED-04`)
+- Working-directory session file names use a fixed hash instead of `DefaultHasher`, whose output may change between Rust releases; a file written under the old name is found once and renamed (`REV-00001-LOW-02`)
+
 ### Fixed
 
 - The `Release` workflow now creates the GitHub release with its binaries attached in one call. A release is immutable once created, so the previous second `gh release upload` step was refused with `HTTP 422`, which left v0.4.0 with release notes and no binaries
