@@ -33,13 +33,13 @@ confidence: high                  # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+implementation_status: completed # not-started | in-progress | blocked | completed | abandoned
 builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00002-safe-command-confirmation"
 execution_started_at: "2026-09-20T20:33:31Z"
-execution_updated_at: "2026-09-20T20:53:23Z"
-execution_completed_at: null
+execution_updated_at: "2026-09-20T20:53:51Z"
+execution_completed_at: "2026-09-20T20:53:51Z"
 current_step: "PLAN-00002-STEP-09"
 ---
 
@@ -835,7 +835,7 @@ both directly.
 | PLAN-00002-STEP-06 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results rows 9-10 | Declined commands now save a turn; see Deviations |
 | PLAN-00002-STEP-07 | completed | 2026-09-20T20:49:08Z | 2026-09-20T20:49:08Z | Verification results rows 11-12 | Both flags and the fail-closed path are covered by integration tests |
 | PLAN-00002-STEP-08 | completed | 2026-09-20T20:50:31Z | 2026-09-20T20:50:31Z | Verification results rows 13-14 | REQ-12 partially met; see Deviations |
-| PLAN-00002-STEP-09 | in-progress | 2026-09-20T20:53:23Z | — | Verification results rows 15-18 | Committing first so the publish dry run has a clean tree |
+| PLAN-00002-STEP-09 | completed | 2026-09-20T21:05:00Z | 2026-09-20T20:53:51Z | Verification results rows 15-20 | Two recorded deviations, both expected states of an unreleased branch |
 
 Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 `skipped`. A skipped step requires explicit user approval recorded in Evidence.
@@ -852,6 +852,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:49:08Z | STEP-07 | Added `--yes`/`-y` and `--i-approve-destructive-commands`; `pre_approved` resolves flags and `[safety] assume_yes`; the no-terminal error now names the tier and the flag that would allow the command | src/lib.rs, tests/mock_ollama.rs | STEP-08: complete the test matrix |
 | 2026-09-20T20:50:31Z | STEP-08 | Added the selection test (second of two chosen, approved, and saved), `require_confirmation = false` back-compat, a `destructive_substrings` match on a quoted argument, and an unparsable command being confirmed rather than run | tests/mock_ollama.rs | STEP-09: documentation, version, release draft |
 | 2026-09-20T20:53:23Z | STEP-09 | Rewrote the safety sections of `README.md`, `docs/configuration.md` (including the built-in rule table), `docs/architecture.md`, `docs/usage.md` (a new "Approving Commands" section), and `docs/testing.md`; bumped to 0.4.0; wrote the `docs/release/v0.4.0.md` draft; recorded the pty harness in `docs/backlog.md` | README.md, docs/, Cargo.toml, Cargo.lock | Final `just ci` on the committed tree, then hand-off |
+| 2026-09-20T20:53:51Z | STEP-09 | Step and plan completed. Local work is done; the branch is ready to push and open as a pull request into `main` | Verification results rows 15-20 | User pushes; Builder records the CI run |
 
 ### Deviations and blockers
 
@@ -890,14 +891,17 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:53:23Z | STEP-09 | The same grep after the step; `just links` | pass | No hits outside `docs/plans` and `docs/reviews`; links ok in 24 Markdown files |
 | 2026-09-20T20:53:23Z | STEP-09 | `cargo run -- --help` against the STEP-01 reference | pass | The two new flags are the only added lines; clap re-aligned the description column because `--i-approve-destructive-commands` is the longest flag |
 | 2026-09-20T20:53:23Z | STEP-09 | `scripts/check-release-tag.sh v0.4.0` | fails on exactly the two expected records | The draft line, and the `## v0.4.0 - <UTC timestamp>` changelog heading that the release commit writes |
+| 2026-09-20T20:53:51Z | STEP-09 | `just ci` on the committed tree | pass | Exit 0; 143 tests pass; lines 4479, missed 420, 90.62% (was 88.93%); `cargo deny`, links, publish dry run, and actionlint clean |
+| 2026-09-20T20:53:51Z | STEP-09 | Acceptance criteria AC-01 to AC-10, AC-12, AC-14 to AC-18 | pass | Each checked with the command named in the criterion |
+| 2026-09-20T20:53:51Z | STEP-09 | AC-11 and AC-13 | partially met | AC-11 holds for `src/lib.rs`; `src/llm.rs` is out of scope. AC-13 holds for `src/safety.rs` (93.85%) and the gate (90.62%); `src/prompt.rs` is 71.65%. Both are in Deviations |
 
 ### Completion summary
 
-- **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00002-REQ-01 to REQ-08; REQ-12 for `src/safety.rs` and the gate
-- **Incomplete requirements:** REQ-09 to REQ-11; REQ-12 for `src/prompt.rs`
-- **Outstanding blockers:** None. See Deviations
-- **Review request:** Not ready
+- **Implementation status:** `completed`
+- **Completed requirements:** PLAN-00002-REQ-01 to REQ-11; REQ-12 for `src/safety.rs` and the 80% gate
+- **Incomplete requirements:** REQ-12 for `src/prompt.rs` only: its three `dialoguer` bodies need a pseudo-terminal, which is now a backlog item
+- **Outstanding blockers:** None. Left with the user: push the branch and open the pull request into `main`; decide on the four items raised in Deviations
+- **Review request:** Ready. Coverage 90.62% lines (was 88.93%); 143 tests
 <!-- BUILDER_WORK_LOG_END -->
 
 ## 18. Planning change log
