@@ -4,6 +4,7 @@ mod llm;
 mod output;
 mod planner;
 mod prompt;
+pub mod safety;
 mod session;
 mod shell;
 
