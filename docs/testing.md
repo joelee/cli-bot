@@ -11,10 +11,10 @@ This runs, in order:
 - `just fmt-check`: `cargo fmt --all -- --check`
 - `just lint`: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `just scripts-check`: `bash -n` against repository shell scripts and hooks
+- `just links`: `scripts/check-links.sh` over the Markdown files
 - `just test`: `cargo test --workspace --all-targets --all-features`
 - `just coverage`: the 80% line-coverage gate
 - `just build`: `cargo build --workspace --all-features --locked`
-- `just package`: `cargo package --allow-dirty`
 
 See the [Developer Guide](developer-guide.md) for setup and every recipe.
 

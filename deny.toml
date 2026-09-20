@@ -1,0 +1,42 @@
+# cargo-deny policy. Run with `just audit`; CI runs it on every push.
+
+[graph]
+all-features = true
+# The platforms cli-bot ships release binaries for.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+[advisories]
+
+[licenses]
+# Permissive licences only. A dependency offering several licences is
+# accepted when any of them is listed here.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    # webpki-roots, reqwest's webpki root store. Permissive.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# A crate in two versions fails the audit; unavoidable duplicates need a
+# skip entry with the reason.
+multiple-versions = "deny"
+wildcards = "deny"
+skip = [
+    { crate = "getrandom@0.2.17", reason = "ring 0.17, rustls's crypto backend, still uses getrandom 0.2" },
+    { crate = "windows-sys@0.59.0", reason = "console 0.15, the Windows terminal backend, uses windows-sys 0.59 while ring and others use 0.61" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

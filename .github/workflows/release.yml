@@ -1,0 +1,144 @@
+name: Release
+
+# Runs when a version tag such as v0.3.3 is pushed. It checks the tag and
+# the release records and builds binaries. Once a maintainer approves the
+# `release` environment, it publishes the crate to crates.io, which cannot
+# be undone, only yanked, and only once that succeeds creates the GitHub
+# release from docs/release/<tag>.md with the binaries attached.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Check the tag and the package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check-release-tag.sh "$GITHUB_REF_NAME"
+      # Keep the version in step with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      # A restored cache may hold a same-version build of the crate, which
+      # cargo would reuse when verifying the package.
+      - run: cargo clean -p cli-bot
+      - run: cargo publish --dry-run --locked
+      # Swatinem/rust-cache's post step fails with ENOENT on the tests/
+      # folder of the crate cargo unpacks into target/package, which is not
+      # worth caching anyway, so remove it first, even after a failure.
+      - if: always()
+        run: rm -rf target/package
+
+  binaries:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      # Keep the version in step with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      # bash on every runner: PowerShell, the default shell on Windows,
+      # does not expand `$TARGET`, and cargo then gets an empty target.
+      - run: cargo build --release --locked --target "$TARGET"
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+      - name: Package
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          name="cli-bot-${GITHUB_REF_NAME#v}-$TARGET"
+          mkdir "$name"
+          cp "target/$TARGET/release/cli-bot" LICENSE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      # A zip for Windows, with its checksum in shasum's `<hash>  <name>`
+      # format so one command checks every download.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          $name = "cli-bot-$($env:GITHUB_REF_NAME.TrimStart('v'))-$env:TARGET"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item "target/$env:TARGET/release/cli-bot.exe", LICENSE, README.md -Destination $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$PWD/$name.zip.sha256", "$hash  $name.zip`n")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            cli-bot-*.tar.gz*
+            cli-bot-*.zip*
+
+  crates:
+    name: Publish to crates.io
+    needs: binaries
+    runs-on: ubuntu-latest
+    # The `release` environment holds the crates.io token and accepts only
+    # v* tags; its required reviewer must approve before anything is
+    # published.
+    environment: release
+    steps:
+      - uses: actions/checkout@v7
+      # Keep the version in step with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Swatinem/rust-cache's post step fails with ENOENT on the tests/
+      # folder of the crate cargo unpacks into target/package, which is not
+      # worth caching anyway, so remove it first, even after a failure.
+      - if: always()
+        run: rm -rf target/package
+
+  release:
+    name: Create the GitHub release and attach binaries
+    needs: crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/release/$GITHUB_REF_NAME.md"
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [ -f "$notes" ]; then
+              gh release create "$GITHUB_REF_NAME" --verify-tag --title "cli-bot $GITHUB_REF_NAME" --notes-file "$notes"
+            else
+              gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+            fi
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

@@ -9,6 +9,10 @@ The format is based on Keep a Changelog.
 ### Changed
 
 - Changed the default model to `ornith-1.5:9b` in the default config template; docs now point to `docs/models-benchmark-report-v0.3.2.md` as the report behind that choice
+- Adopted the release lifecycle of the `passalong` project: releases are now tag-driven through the `Release` GitHub workflow, which checks the tag and records with `scripts/check-release-tag.sh`, builds binaries, publishes to crates.io after the `release` environment is approved, and creates the GitHub release from `docs/release/vX.Y.Z.md`; changelog version headings are `vX.Y.Z - <UTC timestamp>`; the Homebrew formula is updated by `scripts/update-homebrew-formula.sh` on a tap branch; `scripts/release.sh` and `just release` are gone
+- `just check` now runs the Markdown link check (`scripts/check-links.sh`) and no longer runs `cargo package`; `just ci` adds the supply-chain audit (`cargo deny` with `deny.toml`), a `publish-dry-run`, and the workflow lint
+- The crate README links are absolute GitHub URLs, because crates.io resolves relative links against the crate's folder
+- The changelog entry for new work is added at branch creation, before the plan, matching `passalong`
 
 ## [0.3.2] - 2026-09-17
 
@@ -98,7 +102,7 @@ Not published to crates.io and never tagged; shipped as part of 0.3.2.
 - Best-effort GPU VRAM reporting in the models benchmark host section
 - Per-model benchmark summary, success rate, and ranking sections in the Markdown benchmark report
 - Optional file output for `--models-benchmark`, with detailed results grouped by query first for easier model comparison
-- [Roadmap](docs/roadmap.md) for future features beyond the current release scope
+- Roadmap in `docs/roadmap.md` for future features beyond the current release scope
 
 ### Changed
 

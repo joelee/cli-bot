@@ -9,16 +9,14 @@ You need [rustup](https://rustup.rs) and [`just`](https://just.systems)
 (`cargo install --locked just`, or your package manager).
 
 ```bash
-just setup          # llvm-tools-preview, cargo-llvm-cov, cargo-nextest
+just setup          # llvm-tools-preview, cargo-llvm-cov, cargo-nextest,
+                    # cargo-deny, actionlint
 just install-hooks  # run `just check` before every commit
 ```
 
 `rust-toolchain.toml` pins the toolchain (1.98.1 with `rustfmt`, `clippy`,
 and `llvm-tools-preview`); rustup installs it on first use. When you change
-the version, change it in the three files under `.github/workflows/` too.
-
-For `just release`, copy `.env.sample` to `.env` and set
-`HOMEBREW_FORMULA_FILE`. Git ignores `.env`.
+the version, change it in the workflows under `.github/workflows/` too.
 
 ## Recipes
 
@@ -27,25 +25,25 @@ For `just release`, copy `.env.sample` to `.env` and set
 | Recipe | What it does |
 |---|---|
 | `just default` | Lists the recipes. |
-| `just setup` | Installs `llvm-tools-preview`, `cargo-llvm-cov`, and `cargo-nextest` when missing. |
+| `just setup` | Installs `llvm-tools-preview`, `cargo-llvm-cov`, `cargo-nextest`, `cargo-deny`, and `actionlint` when missing. |
 | `just fmt` | Formats all code in place. |
 | `just fmt-check` | Fails if any file is not formatted. |
 | `just lint` | Runs clippy on all targets; a warning is an error. |
 | `just scripts-check` | Checks the syntax of `scripts/*.sh` and `.githooks/*` with `bash -n`. |
+| `just links` | Runs `scripts/check-links.sh`: relative targets, heading anchors, `main`-branch paths, and absolute links in the crate README. |
 | `just test` | Runs the unit tests and the mocked-Ollama integration tests. |
 | `just test-junit` | Runs the tests with nextest and writes `target/test-results/unit-tests.xml`. |
 | `just coverage` | Runs the tests under `cargo llvm-cov` and fails below 80% line coverage. |
 | `just coverage-html` | Writes the HTML coverage report to `target/llvm-cov/html/index.html`. |
 | `just coverage-lcov` | Writes `target/coverage/lcov.info` for Codecov. |
 | `just build` | Builds from the lockfile (`--locked`). |
-| `just package` | Packages the crate and verifies that the package builds. |
-| `just package-list` | Lists the files that go into the crate. |
+| `just audit` | Runs `cargo deny check` with `deny.toml`: advisories, licences, bans, sources. |
+| `just publish-dry-run` | Packages the crate and verifies it builds as a crates.io dependency, without uploading. |
 | `just lint-workflows` | Runs `actionlint` on the GitHub workflows, from its Docker image when it is not installed. |
-| `just check` | `fmt-check`, `lint`, `scripts-check`, `test`, `coverage`, `build`, `package`. Run this before you call work complete. |
-| `just ci` | `check`, then `lint-workflows`. |
+| `just check` | `fmt-check`, `lint`, `scripts-check`, `links`, `test`, `coverage`, `build`. Run this before you call work complete. |
+| `just ci` | `check`, then `audit`, `publish-dry-run`, and `lint-workflows`. |
 | `just install-hooks` | Points Git at `.githooks`, so each commit runs `just check`. |
-| `just run <args>` | Runs the CLI, for example `just run -n list files`. |
-| `just release vX.Y.Z` | Runs `scripts/release.sh`: checks, publishes to crates.io, updates the Homebrew formula. The project owner runs this, never an agent. |
+| `just run <args>` | Runs the CLI, for example `just run --check`. |
 
 `just check` takes about 30 seconds once the build is warm, because
 `coverage` runs the tests a second time with instrumentation. Do not skip
@@ -81,14 +79,18 @@ Work follows `AGENTS.md` § New feature workflow:
 
 1. Start from a clean tree on `main` and create
    `feature/<NNNNN>-<name>`.
-2. Write the plan in `docs/plans/` (see `docs/plans/AGENTS.md`); allocate
+2. Add the `Unreleased` changelog entry.
+3. Write the plan in `docs/plans/` (see `docs/plans/AGENTS.md`); allocate
    its number with
    `.agents/skills/allocating-report-numbers/allocate-report.sh docs/plans <Name>.md`.
-3. The owner approves the plan.
-4. Add the `Unreleased` changelog entry, then work test-first, one commit
-   per plan step, keeping the plan's Builder Work Log current.
-5. Finish with `just ci`, update `docs/backlog.md`, and hand over. The
+4. The owner approves the plan.
+5. Work test-first, one commit per plan step, keeping the plan's Builder
+   Work Log current.
+6. Finish with `just ci`, update `docs/backlog.md`, and hand over. The
    owner pushes and opens the pull request into `main`.
+
+Releasing is tag-driven; see [crates.io Release](crates-release.md) and
+`AGENTS.md` § Release workflow.
 
 Ideas (`docs/ideas/`) and code reviews (`docs/reviews/`) are numbered,
 immutable records with their own `AGENTS.md`.
@@ -97,6 +99,7 @@ immutable records with their own `AGENTS.md`.
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `release-checks.yml` | Pull requests; pushes to `main` and `feature/**`; `v*` tags | `just check`, `just package-list`; on tags, uploads the `.crate` file |
+| `release-checks.yml` | Pull requests; pushes to `main` and `feature/**` | `just ci`: all checks, the supply-chain audit, the publish dry run, and the workflow lint |
+| `release.yml` | `v*` tags | Checks the tag and release records, builds binaries, publishes to crates.io after the `release` environment is approved, creates the GitHub release |
 | `unit-coverage.yml` | Pull requests; pushes to `main` | `just coverage-lcov`, `just coverage-html`, `just test-junit`; uploads to Codecov |
 | `coverage-pages.yml` | Pushes to `main` | `just coverage-html`; publishes the report to GitHub Pages |
