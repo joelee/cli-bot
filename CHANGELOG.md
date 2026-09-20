@@ -6,6 +6,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## v0.4.0 - 2026-09-20T22:05:10Z
+
 ### Changed
 
 - **Commands now need approval unless they are recognised as read-only** (PLAN-00002, `REV-00001-MAJ-01`). A command is classified by parsing it into programs: read-only programs run as before, known-destructive ones get a strong prompt, and everything else gets an ordinary prompt. Previously a command ran without a prompt unless the model flagged it or its text contained a configured substring, which let `rm -fr`, `rm -r -f`, `shred`, `curl | sh`, and redirections through
