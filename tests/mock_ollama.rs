@@ -266,8 +266,24 @@ impl ScriptedPrompter {
         }
     }
 
+    fn with_confirmations(mut self, answers: impl IntoIterator<Item = bool>) -> Self {
+        self.confirmations = Mutex::new(answers.into_iter().collect());
+        self
+    }
+
     fn asked(&self) -> Vec<Asked> {
         self.asked.lock().expect("asked should lock").clone()
+    }
+
+    /// The confirmation prompts shown, as (text, default answer).
+    fn confirmations_shown(&self) -> Vec<(String, bool)> {
+        self.asked()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Asked::Confirm { prompt, default } => Some((prompt, default)),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -339,6 +355,24 @@ fn run_with_prompter_drives_the_same_flow_as_run() {
     );
 }
 
+/// A planner reply whose single command is `command`, never flagged by the
+/// model, so only cli-bot's own classification decides what happens.
+fn plan_for(command: &str) -> MockResponse {
+    MockResponse::generated(
+        &serde_json::json!({
+            "summary": "x",
+            "unresolved": false,
+            "commands": [{
+                "command": command,
+                "description": "d",
+                "potentially_destructive": false,
+                "recommended": true,
+            }],
+        })
+        .to_string(),
+    )
+}
+
 const PRINTF_PLAN: &str = r#"{"summary":"Print ok","unresolved":false,"commands":[{"command":"printf ok","description":"Print ok","potentially_destructive":false,"recommended":true,"rationale":"Harmless"}]}"#;
 const UNRESOLVED_PLAN: &str = r#"{"summary":"Need clarification","unresolved":true,"commands":[]}"#;
 
@@ -372,18 +406,84 @@ fn executes_command_and_saves_session_turn_with_captured_output() {
 #[test]
 fn failed_command_returns_error_and_saves_no_turn() {
     let storage_dir = unique_temp_dir("cli-bot-exec-failure");
-    let server = MockOllamaServer::start(
-        Arc::new(Mutex::new(Vec::new())),
-        vec![MockResponse::generated(
-            r#"{"unresolved":false,"commands":[{"command":"exit 3","description":"Fail","recommended":true}]}"#,
-        )],
-    );
+    let server =
+        MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for("exit 3")]);
     let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent().with_confirmations([true]);
 
-    let error = run(session_cli(config_path, vec!["fail"])).expect_err("exit 3 should fail");
+    let error = run_with_prompter(session_cli(config_path, vec!["fail"]), &prompter)
+        .expect_err("exit 3 should fail");
 
     assert!(error.to_string().contains("command exited with status"));
     assert!(!storage_dir.join("sessions/default.json").exists());
+}
+
+#[test]
+fn a_read_only_command_runs_without_any_prompt() {
+    let storage_dir = unique_temp_dir("cli-bot-tier-read-only");
+    let server =
+        MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for("ls -la")]);
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent();
+
+    run_with_prompter(session_cli(config_path, vec!["list files"]), &prompter)
+        .expect("a read-only command should run");
+
+    assert_eq!(prompter.asked(), Vec::new());
+    let turn = &read_default_session(&storage_dir)["turns"][0];
+    assert_eq!(turn["risk"], "read-only");
+    assert_eq!(turn["confirmation_required"], false);
+    assert_eq!(turn["execution"]["executed"], true);
+}
+
+#[test]
+fn a_state_changing_command_is_confirmed_with_yes_as_the_default() {
+    let storage_dir = unique_temp_dir("cli-bot-tier-state-changing");
+    fs::create_dir_all(&storage_dir).expect("storage dir should exist");
+    let target = storage_dir.join("created-by-the-test");
+    let command = format!("touch {}", path_to_string(&target));
+    let server =
+        MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for(&command)]);
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent().with_confirmations([true]);
+
+    run_with_prompter(session_cli(config_path, vec!["create the file"]), &prompter)
+        .expect("an approved command should run");
+
+    let shown = prompter.confirmations_shown();
+    assert_eq!(shown.len(), 1);
+    assert!(shown[0].0.starts_with("Approve?"), "{:?}", shown[0].0);
+    assert!(shown[0].1, "the ordinary tier defaults to yes");
+    assert!(target.is_file(), "the approved command should have run");
+    let turn = &read_default_session(&storage_dir)["turns"][0];
+    assert_eq!(turn["risk"], "state-changing");
+    assert_eq!(turn["confirmation_required"], true);
+}
+
+#[test]
+fn a_destructive_command_is_confirmed_with_no_as_the_default_and_obeys_a_refusal() {
+    let storage_dir = unique_temp_dir("cli-bot-tier-destructive");
+    // Harmless even if the refusal were ignored: the path does not exist.
+    let command = format!("rm -fr {}", path_to_string(&storage_dir.join("absent")));
+    let server =
+        MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for(&command)]);
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent().with_confirmations([false]);
+
+    run_with_prompter(session_cli(config_path, vec!["delete it"]), &prompter)
+        .expect("a declined command is not an error");
+
+    let shown = prompter.confirmations_shown();
+    assert_eq!(shown.len(), 1);
+    assert!(
+        shown[0].0.starts_with("This command may be destructive"),
+        "{:?}",
+        shown[0].0
+    );
+    assert!(!shown[0].1, "the destructive tier defaults to no");
+    let turn = &read_default_session(&storage_dir)["turns"][0];
+    assert_eq!(turn["risk"], "destructive");
+    assert_eq!(turn["execution"]["executed"], false);
 }
 
 #[test]
@@ -1005,7 +1105,8 @@ destructive_substrings = ["rm -rf"]
 
 [ui]
 selection_prompt = "Choose"
-approval_prompt = "Approve?"
+approval_prompt = "This command may be destructive. Approve execution?"
+confirmation_prompt = "Approve?"
 show_command_before_execution = true
 auto_select_recommended = false
 

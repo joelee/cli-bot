@@ -139,16 +139,41 @@ fn default_auto_setting() -> String {
     "auto".to_string()
 }
 
+fn default_confirmation_prompt() -> String {
+    "Run this command?".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SafetyConfig {
+    /// The master switch. When false, nothing is ever confirmed.
     pub require_confirmation: bool,
+    /// Text that forces the destructive tier wherever it appears in a
+    /// command. Kept from before v0.4.0, and matched case-insensitively.
     pub destructive_substrings: Vec<String>,
+    /// Commands that run without asking. Each entry matches whole leading
+    /// words, so `git log` covers `git log --oneline` but not `git logs`.
+    #[serde(default = "crate::safety::default_read_only_commands")]
+    pub read_only_commands: Vec<String>,
+    /// Extra commands for the destructive tier, matched like
+    /// `read_only_commands`. The built-in rules already cover the common
+    /// ones; see `docs/configuration.md`.
+    #[serde(default)]
+    pub destructive_commands: Vec<String>,
+    /// Pre-approves the state-changing tier, as `--yes` does. There is no
+    /// such key for the destructive tier.
+    #[serde(default)]
+    pub assume_yes: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UiConfig {
     pub selection_prompt: String,
+    /// Shown for a destructive command.
     pub approval_prompt: String,
+    /// Shown for a command that changes something without an obvious way to
+    /// lose data.
+    #[serde(default = "default_confirmation_prompt")]
+    pub confirmation_prompt: String,
     pub show_command_before_execution: bool,
     #[serde(default)]
     pub auto_select_recommended: bool,
@@ -357,10 +382,100 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::{
-        AppConfig, ExecutionConfig, ModelsBenchmarkConfig, SessionMemoryConfig, SessionScope,
-        default_config_paths_for_home, is_known_editor_in_path, resolve_config_path,
-        resolve_config_path_for_home, resolve_preferred_editor,
+        AppConfig, DEFAULT_CONFIG_TEMPLATE, ExecutionConfig, ModelsBenchmarkConfig,
+        SessionMemoryConfig, SessionScope, default_config_paths_for_home, is_known_editor_in_path,
+        resolve_config_path, resolve_config_path_for_home, resolve_preferred_editor,
     };
+
+    /// A `cli-bot.toml` as v0.3.2 shipped it, with none of the v0.4.0 safety
+    /// keys, so an existing installation keeps working after an upgrade.
+    const V0_3_2_CONFIG: &str = r#"
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "lfm2:latest"
+temperature = 0.0
+system_prompt = "Return JSON only"
+
+[safety]
+require_confirmation = true
+destructive_substrings = ["rm -rf"]
+
+[ui]
+selection_prompt = "Choose"
+approval_prompt = "Approve?"
+show_command_before_execution = true
+
+[execution]
+shell = "/bin/sh"
+shell_arg = "-c"
+"#;
+
+    #[test]
+    fn a_config_from_before_v0_4_0_gets_the_shipped_defaults() {
+        let config = toml::from_str::<AppConfig>(V0_3_2_CONFIG).expect("config should parse");
+
+        assert_eq!(
+            config.safety.read_only_commands,
+            crate::safety::default_read_only_commands()
+        );
+        assert!(config.safety.destructive_commands.is_empty());
+        assert!(!config.safety.assume_yes);
+        assert_eq!(config.ui.confirmation_prompt, "Run this command?");
+        assert_eq!(config.safety.destructive_substrings, vec!["rm -rf"]);
+    }
+
+    #[test]
+    fn the_new_safety_keys_round_trip() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "m"
+temperature = 0.0
+system_prompt = "x"
+
+[safety]
+require_confirmation = true
+destructive_substrings = []
+read_only_commands = ["ls", "git log"]
+destructive_commands = ["deploy"]
+assume_yes = true
+
+[ui]
+selection_prompt = "Choose"
+approval_prompt = "Approve?"
+confirmation_prompt = "Really?"
+show_command_before_execution = true
+
+[execution]
+shell = "/bin/sh"
+shell_arg = "-c"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.safety.read_only_commands, vec!["ls", "git log"]);
+        assert_eq!(config.safety.destructive_commands, vec!["deploy"]);
+        assert!(config.safety.assume_yes);
+        assert_eq!(config.ui.confirmation_prompt, "Really?");
+    }
+
+    #[test]
+    fn the_shipped_template_parses_and_lists_read_only_commands() {
+        let config =
+            toml::from_str::<AppConfig>(DEFAULT_CONFIG_TEMPLATE).expect("template should parse");
+
+        assert!(config.safety.require_confirmation);
+        assert!(!config.safety.assume_yes);
+        assert!(config.safety.read_only_commands.contains(&"ls".to_string()));
+        assert!(
+            config
+                .safety
+                .read_only_commands
+                .contains(&"git log".to_string())
+        );
+        assert!(config.safety.destructive_commands.is_empty());
+    }
 
     #[test]
     fn parses_full_config() {

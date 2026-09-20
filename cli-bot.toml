@@ -16,7 +16,41 @@ distro = "auto"
 preferred_package_manager = "auto"
 
 [safety]
+# The master switch. Setting this to false runs every command without
+# asking, including destructive ones.
 require_confirmation = true
+
+# Pre-approves the state-changing tier, as `--yes` does. The destructive
+# tier is never pre-approved from configuration; that needs
+# `--i-approve-destructive-commands` on the command line.
+assume_yes = false
+
+# Commands that run without asking. Each entry matches whole leading words,
+# so "git log" covers "git log --oneline" but not "git logs". Everything not
+# listed here is confirmed first. See docs/configuration.md.
+read_only_commands = [
+  "ls", "dir", "vdir", "cat", "bat", "head", "tail", "less", "more",
+  "wc", "stat", "file", "du", "df", "tree", "find", "fd", "grep", "rg",
+  "pwd", "whoami", "id", "groups", "hostname", "uname", "uptime", "date",
+  "cal", "printenv", "which", "type", "man", "tldr", "ps", "free",
+  "lscpu", "lsblk", "lsusb", "lspci", "ping", "dig", "host", "nslookup",
+  "traceroute", "echo", "printf", "basename", "dirname", "realpath",
+  "readlink", "sort", "uniq", "cut", "nl", "diff", "cmp", "md5sum",
+  "sha256sum",
+  "git status", "git log", "git diff", "git show", "git branch",
+  "git remote", "git blame", "git describe",
+  "docker ps", "docker images", "systemctl status", "cargo tree",
+  "npm list"
+]
+
+# Extra commands for the destructive tier, matched the same way. The
+# built-in rules already cover rm, find, chmod, chown, git, docker,
+# systemctl, shred, dd, mkfs, kill, and shutdown; add your own here.
+destructive_commands = []
+
+# Text that forces the destructive tier wherever it appears in a command.
+# Matched case-insensitively, anywhere in the text, so it can fire on a
+# quoted argument too.
 destructive_substrings = [
   "rm -rf",
   "mkfs",
@@ -42,6 +76,7 @@ destructive_substrings = [
 [ui]
 selection_prompt = "Multiple commands match your request. Select one to execute"
 approval_prompt = "This command may be destructive. Approve execution?"
+confirmation_prompt = "Run this command?"
 show_command_before_execution = true
 auto_select_recommended = false
 

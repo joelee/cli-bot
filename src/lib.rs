@@ -21,11 +21,10 @@ use crate::config::{AppConfig, ModelsBenchmarkConfig, is_known_editor, resolve_c
 use crate::environment::{PackageManagerSource, resolve_environment};
 use crate::llm::{OllamaBenchmarkMetadata, OllamaClient};
 pub use crate::output::{ColorMode, OutputStyler};
-use crate::planner::{
-    CommandPlan, PlannedCommand, command_requires_confirmation, recommended_command,
-};
+use crate::planner::{CommandPlan, PlannedCommand, recommended_command};
 use crate::prompt::describe_terminal;
 pub use crate::prompt::{DialoguerPrompter, Prompter};
+use crate::safety::{CommandRisk, classify};
 use crate::session::{SessionExecution, SessionStore, SessionTurn};
 
 #[derive(Debug, Parser)]
@@ -335,6 +334,42 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
     run_single_request(&context, prompter, &request)
 }
 
+/// Whether a command of this risk is shown to the user before it runs.
+fn requires_approval(risk: CommandRisk, safety: &crate::config::SafetyConfig) -> bool {
+    safety.require_confirmation && risk > CommandRisk::ReadOnly
+}
+
+/// Asks the user to approve `command`, using the wording and the default
+/// answer its risk deserves. A prompt that cannot be shown is an error, never
+/// an implicit yes.
+fn ask_approval(
+    risk: CommandRisk,
+    command: &str,
+    config: &AppConfig,
+    prompter: &dyn Prompter,
+) -> Result<bool> {
+    // `assume_yes` covers the ordinary tier only; the destructive tier is
+    // never pre-approved from configuration.
+    if config.safety.assume_yes && risk != CommandRisk::Destructive {
+        return Ok(true);
+    }
+
+    if !prompter.supports_dialogs() {
+        bail!(
+            "this command is {} and needs approval, but no terminal is available to ask; current terminal status: {}. Run cli-bot in an interactive terminal, or use --dry-run to see the command without running it",
+            risk.as_str(),
+            describe_terminal()
+        )
+    }
+
+    let (prompt, default) = match risk {
+        CommandRisk::Destructive => (&config.ui.approval_prompt, false),
+        _ => (&config.ui.confirmation_prompt, true),
+    };
+
+    prompter.confirm(&format!("{prompt}\n{command}"), default)
+}
+
 /// Everything one request needs, resolved once per process.
 struct RequestContext<'a> {
     cli: &'a Cli,
@@ -478,6 +513,24 @@ fn run_single_request(
         )
     });
 
+    let risk = classify(
+        &selected.command,
+        selected.potentially_destructive,
+        &config.safety.destructive_substrings,
+        &config.safety.read_only_commands,
+        &config.safety.destructive_commands,
+    );
+    if verbose {
+        eprintln!(
+            "{}",
+            output.stderr_dim(&format!("[verbose] command risk: {}", risk.as_str()))
+        );
+    }
+    if let Some(turn) = session_turn.as_mut() {
+        turn.risk = Some(risk.as_str().to_string());
+        turn.confirmation_required = requires_approval(risk, &config.safety);
+    }
+
     if show_output && auto_select_best && plan.commands.len() > 1 && selected.recommended {
         println!(
             "{} {}",
@@ -504,7 +557,6 @@ fn run_single_request(
         {
             turn.selected_command = Some(selected.command.clone());
             turn.selected_command_rationale = selected.rationale.clone();
-            turn.confirmation_required = command_requires_confirmation(selected, &config.safety);
             turn.execution = Some(SessionExecution {
                 executed: false,
                 exit_status: None,
@@ -526,16 +578,24 @@ fn run_single_request(
         return Ok(());
     }
 
-    if command_requires_confirmation(selected, &config.safety) {
-        if let Some(turn) = session_turn.as_mut() {
-            turn.confirmation_required = true;
-        }
-        let approved = prompter.confirm(
-            &format!("{}\n{}", config.ui.approval_prompt, selected.command),
-            false,
-        )?;
+    if requires_approval(risk, &config.safety) {
+        let approved = ask_approval(risk, &selected.command, config, prompter)?;
 
         if !approved {
+            if let (Some(record), Some(turn)) = (session_record.as_mut(), session_turn.as_mut())
+                && config.session_memory.save_selected_commands
+            {
+                turn.selected_command = Some(selected.command.clone());
+                turn.selected_command_rationale = selected.rationale.clone();
+                turn.execution = Some(SessionExecution {
+                    executed: false,
+                    exit_status: None,
+                    stdout: None,
+                    stderr: None,
+                });
+                record.push_turn(turn.clone());
+                session_store.save(record)?;
+            }
             if show_output {
                 println!("{}", output.warn("Command execution cancelled."));
             }
@@ -2065,6 +2125,7 @@ mod tests {
             selected_command: Some("fd gitconfig ~".into()),
             selected_command_rationale: None,
             confirmation_required: false,
+            risk: None,
             text_response: None,
             execution: None,
         });
@@ -2158,12 +2219,16 @@ mod tests {
             safety: SafetyConfig {
                 require_confirmation: true,
                 destructive_substrings: vec![],
+                read_only_commands: Vec::new(),
+                destructive_commands: Vec::new(),
+                assume_yes: false,
             },
             ui: UiConfig {
                 selection_prompt: "Choose".into(),
                 approval_prompt: "Approve?".into(),
                 show_command_before_execution: true,
                 auto_select_recommended: false,
+                confirmation_prompt: "Run this command?".into(),
             },
             execution: ExecutionConfig {
                 shell: "/bin/sh".into(),

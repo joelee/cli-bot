@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00002-safe-command-confirmation"
 execution_started_at: "2026-09-20T20:33:31Z"
-execution_updated_at: "2026-09-20T20:43:12Z"
+execution_updated_at: "2026-09-20T20:47:20Z"
 execution_completed_at: null
-current_step: "PLAN-00002-STEP-04"
+current_step: "PLAN-00002-STEP-06"
 ---
 
 # Delivery Plan 00002: Safe Command Confirmation
@@ -831,8 +831,8 @@ both directly.
 | PLAN-00002-STEP-02 | completed | 2026-09-20T20:36:52Z | 2026-09-20T20:36:52Z | Verification results row 3 | Behaviour unchanged; `run_check` keeps a `too_many_arguments` allow until STEP-03 |
 | PLAN-00002-STEP-03 | completed | 2026-09-20T20:38:12Z | 2026-09-20T20:38:12Z | Verification results rows 4-5 | One deviation recorded: the pre-existing allow in the out-of-scope `src/llm.rs` |
 | PLAN-00002-STEP-04 | completed | 2026-09-20T20:43:12Z | 2026-09-20T20:43:12Z | Verification results rows 6-7 | `src/safety.rs` 93.85%; module made public, see Deviations |
-| PLAN-00002-STEP-05 | not-started | — | — | — | — |
-| PLAN-00002-STEP-06 | not-started | — | — | — | — |
+| PLAN-00002-STEP-05 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results row 8 | Committed together with STEP-06; see Deviations |
+| PLAN-00002-STEP-06 | completed | 2026-09-20T20:47:20Z | 2026-09-20T20:47:20Z | Verification results rows 9-10 | Declined commands now save a turn; see Deviations |
 | PLAN-00002-STEP-07 | not-started | — | — | — | — |
 | PLAN-00002-STEP-08 | not-started | — | — | — | — |
 | PLAN-00002-STEP-09 | not-started | — | — | — | — |
@@ -848,6 +848,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:36:52Z | STEP-02 | Created `src/prompt.rs` with `Prompter`, `DialoguerPrompter`, and `describe_terminal`; moved `prompt_for_request`, `interactive_prompt_theme`, and `TerminalEnvironmentStatus` there unchanged; added `run_with_prompter`, threaded `&dyn Prompter` through `run_check`, the interactive loop, `run_single_request`, and `select_command`; added `ScriptedPrompter` and one seam test | src/prompt.rs, src/lib.rs, tests/mock_ollama.rs | STEP-03: RequestContext |
 | 2026-09-20T20:38:12Z | STEP-03 | `RequestContext<'a>` built once in `run_with_prompter`; `run_single_request` now takes `(&RequestContext, &dyn Prompter, &str)`; the allow is gone from both `run_single_request` and `run_check` (7 arguments, within the threshold) | src/lib.rs | STEP-04: the classifier |
 | 2026-09-20T20:43:12Z | STEP-04 | Wrote `src/safety.rs`: `CommandRisk`, a quote-aware parser (segments, redirections, `$(...)` and backticks, wrapper stripping), the built-in destructive rule table, and `classify`. All fourteen commands of the REV-00001-MAJ-01 table reach the tier AC-01 requires | src/safety.rs | STEP-05: configuration |
+| 2026-09-20T20:47:20Z | STEP-06 | Added `[safety] read_only_commands`, `destructive_commands`, `assume_yes` and `[ui] confirmation_prompt` with serde defaults and shipped values in `cli-bot.toml`; replaced `planner::command_requires_confirmation` with `safety::classify`; added `requires_approval` and `ask_approval`; the session turn now records the tier | src/config.rs, cli-bot.toml, src/lib.rs, src/planner.rs, src/session.rs | STEP-07: the pre-approval flags |
 
 ### Deviations and blockers
 
@@ -857,6 +858,8 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:38:12Z | STEP-03 | AC-11 asks that `git grep -n "too_many_arguments" src/` find nothing, but `src/llm.rs:24` carries a pre-existing allow on `OllamaClient::plan_commands` (8 arguments), and `src/llm.rs` is not in the plan's scope (section 4). REQ-02, which asks only that the allow on `run_single_request` be removed, is met in full, and the grep is clean for `src/lib.rs` | AC-11 is met for the file the requirement is about; the `src/llm.rs` allow is untouched and reported at hand-off | User, at hand-off: whether to clean `src/llm.rs` in a follow-up |
 | 2026-09-20T20:43:12Z | STEP-04 | The plan wanted the classifier to sit unused until STEP-06, but `just lint` denies dead code, so nothing can be committed that nothing calls. The module is `pub mod safety` instead of private: `CommandRisk` and `classify` become public API, which also lets an integration test assert the table directly | A wider public API than the plan implied; no behaviour change, and STEP-06 still does the wiring | User, at hand-off: whether `safety` should be private again once it is wired |
 | 2026-09-20T20:43:12Z | STEP-04 | One test expectation written in the same step was wrong: `echo 'rm -fr /'` only prints a string, so `ReadOnly` is right and the implementation was correct. The test now asserts `ReadOnly`, with `echo 'rm -rf /'` asserting that the legacy substring list still fires on quoted text | None; the AC-01 table is untouched | None; planner decision |
+| 2026-09-20T20:47:20Z | STEP-06 | STEP-05 and STEP-06 landed in one commit. `just lint` denies dead code, so the new configuration fields cannot be committed in a step before the step that reads them | None on scope; both steps' tasks and verifications were carried out in full, in order | None; planner decision |
+| 2026-09-20T20:47:20Z | STEP-06 | The new destructive-tier test found that a declined command saved no session turn at all, so REQ-04 ("saves its session turn as not executed") was not met by the code being replaced. The declined path now saves the turn, as the dry-run path already did | A behaviour improvement inside REQ-04; a follow-up such as "why did I decline that" now has context | None; required by REQ-04 |
 
 ### Verification results
 
@@ -869,13 +872,16 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T20:38:12Z | STEP-03 | `just check`; `git grep -n too_many_arguments src/lib.rs`; `--help` against the STEP-01 reference | pass | Exit 0; 121 tests; lines 3853, missed 412, 89.31%; no allow left in `src/lib.rs`; `--help` byte-identical |
 | 2026-09-20T20:43:12Z | STEP-04 | Test first: the whole table against a stub returning `StateChanging` | fails as expected | 8 of 11 tests failed, including `classifies_the_review_table` |
 | 2026-09-20T20:43:12Z | STEP-04 | `cargo test --lib safety`; `just check` | pass | 11 classifier tests pass; `just check` exit 0; 132 tests total; `src/safety.rs` 93.85% lines (floor 90%); total 89.88%, up from 88.93% |
+| 2026-09-20T20:47:20Z | STEP-05 | Unit tests: a v0.3.2 config parses and yields the shipped defaults; the new keys round-trip; `cli-bot.toml` parses | pass | Three new tests in `src/config.rs` |
+| 2026-09-20T20:47:20Z | STEP-06 | Test first: the three tier tests against the old policy | fail as expected | Also `failed_command_returns_error_and_saves_no_turn` failed, because `exit 3` is state-changing and the run had no terminal |
+| 2026-09-20T20:47:20Z | STEP-06 | `just check`; `--help` against the STEP-01 reference; a v0.3.2 session file loads | pass | Exit 0; 135 tests; total 90.21% (was 88.93%); `src/safety.rs` 93.85%; `--help` byte-identical; `risk` is `#[serde(default)]` |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00002-REQ-01, REQ-02, REQ-03
-- **Incomplete requirements:** REQ-04 to REQ-12
-- **Outstanding blockers:** None. AC-11 narrowed to `src/lib.rs`; `safety` is public; see Deviations
+- **Completed requirements:** PLAN-00002-REQ-01 to REQ-05; REQ-04 pending its flag interaction in STEP-07
+- **Incomplete requirements:** REQ-06 to REQ-12
+- **Outstanding blockers:** None. See Deviations for AC-11, the public `safety` module, and the merged steps
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
 
