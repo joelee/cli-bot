@@ -532,7 +532,7 @@ preferred_editor = "nvim"
         assert!(resolved.is_file());
 
         let config = AppConfig::load(&resolved).expect("created config should parse");
-        assert_eq!(config.ollama.model, "lfm2:latest");
+        assert_eq!(config.ollama.model, "ornith-1.5:9b");
 
         fs::remove_file(&resolved).expect("config file should be removed");
         fs::remove_dir_all(&temp_home).expect("temp home should be removed");
