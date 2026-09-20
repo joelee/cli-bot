@@ -33,14 +33,14 @@ confidence: high                  # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: not-started # not-started | in-progress | blocked | completed | abandoned
-builder_agent: null
-builder_model: null
-execution_branch: null
-execution_started_at: null
-execution_updated_at: null
+implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+builder_agent: "Claude Code"
+builder_model: "anthropic/claude-opus-5"
+execution_branch: "feature/00002-safe-command-confirmation"
+execution_started_at: "2026-09-20T20:33:31Z"
+execution_updated_at: "2026-09-20T20:33:31Z"
 execution_completed_at: null
-current_step: null
+current_step: "PLAN-00002-STEP-01"
 ---
 
 # Delivery Plan 00002: Safe Command Confirmation
@@ -827,7 +827,7 @@ both directly.
 
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
-| PLAN-00002-STEP-01 | not-started | — | — | — | — |
+| PLAN-00002-STEP-01 | completed | 2026-09-20T20:33:31Z | 2026-09-20T20:33:31Z | Verification results rows 1-2 | Baseline identical to plan section 3 |
 | PLAN-00002-STEP-02 | not-started | — | — | — | — |
 | PLAN-00002-STEP-03 | not-started | — | — | — | — |
 | PLAN-00002-STEP-04 | not-started | — | — | — | — |
@@ -844,6 +844,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
+| 2026-09-20T20:33:31Z | STEP-01 | Execution started on the approved plan; baseline matches plan section 3 exactly (88.93%) | Verification results rows 1-2 | STEP-02: Prompter trait |
 
 ### Deviations and blockers
 
@@ -854,12 +855,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 
 | Timestamp (UTC) | Step | Command or check | Result | Evidence |
 |---|---|---|---|---|
+| 2026-09-20T20:33:31Z | STEP-01 | `just ci` | pass | Exit 0; 118 tests pass; lines 3813, missed 422, 88.93%; `cargo deny`, links, publish dry run, actionlint clean |
+| 2026-09-20T20:33:31Z | STEP-01 | Reference outputs saved outside the repository | recorded | `--help` (27 lines) for AC-17; the REV-00001-MAJ-01 table with the expected tier per command for AC-01 |
 
 ### Completion summary
 
-- **Implementation status:** `not-started`
+- **Implementation status:** `in-progress`
 - **Completed requirements:** None
-- **Incomplete requirements:** All
+- **Incomplete requirements:** REQ-01 to REQ-12
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
