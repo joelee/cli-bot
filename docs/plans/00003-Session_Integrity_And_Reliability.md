@@ -33,14 +33,14 @@ confidence: high                  # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: not-started # not-started | in-progress | blocked | completed | abandoned
-builder_agent: null
-builder_model: null
-execution_branch: null
-execution_started_at: null
-execution_updated_at: null
+implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+builder_agent: "Claude Code"
+builder_model: "anthropic/claude-opus-5"
+execution_branch: "feature/00003-session-integrity-and-reliability"
+execution_started_at: "2026-09-20T23:18:41Z"
+execution_updated_at: "2026-09-20T23:18:41Z"
 execution_completed_at: null
-current_step: null
+current_step: "PLAN-00003-STEP-01"
 ---
 
 # Delivery Plan 00003: Session Integrity And Reliability
@@ -719,7 +719,7 @@ because its publish dry run needs a clean tree.
 
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
-| PLAN-00003-STEP-01 | not-started | — | — | — | — |
+| PLAN-00003-STEP-01 | completed | 2026-09-20T23:18:41Z | 2026-09-20T23:18:41Z | Verification results rows 1-2 | One stale figure in section 3; see Deviations |
 | PLAN-00003-STEP-02 | not-started | — | — | — | — |
 | PLAN-00003-STEP-03 | not-started | — | — | — | — |
 | PLAN-00003-STEP-04 | not-started | — | — | — | — |
@@ -734,22 +734,26 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
+| 2026-09-20T23:18:41Z | STEP-01 | Execution started on the approved plan; baseline confirmed | Verification results rows 1-2 | STEP-02: the session write path |
 
 ### Deviations and blockers
 
 | Timestamp (UTC) | Step | Deviation or blocker | Impact | Decision required from |
 |---|---|---|---|---|
+| 2026-09-20T23:18:41Z | STEP-01 | Plan section 3 gives `src/shell.rs` as 88.24%, which was its figure before PLAN-00002; the measured value is 93.14%. Every other figure, including the 90.62% total, matches exactly | None; the stated total and the per-file floors in REQ-11 are unaffected | None; planner error in a non-binding figure |
 
 ### Verification results
 
 | Timestamp (UTC) | Step | Command or check | Result | Evidence |
 |---|---|---|---|---|
+| 2026-09-20T23:18:41Z | STEP-01 | `just ci` | pass | Exit 0; 143 tests; lines 4479, missed 420, 90.62%, matching plan section 3 exactly |
+| 2026-09-20T23:18:41Z | STEP-01 | Reference material saved outside the repository | recorded | `--help` (29 lines) for AC-17; a v0.4.0-format session file, including the `risk` field, for AC-14 |
 
 ### Completion summary
 
-- **Implementation status:** `not-started`
+- **Implementation status:** `in-progress`
 - **Completed requirements:** None
-- **Incomplete requirements:** All
+- **Incomplete requirements:** REQ-01 to REQ-11
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
