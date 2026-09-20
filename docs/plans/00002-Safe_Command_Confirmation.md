@@ -8,10 +8,10 @@ tags:
   - claude-code
 type: delivery-plan
 plan_id: "PLAN-00002"
-plan_status: draft                 # draft | approved | cancelled
+plan_status: approved              # draft | approved | cancelled
 plan_kind: initial                 # initial | superseding
 created_at: "2026-09-20T20:21:39Z"
-approved_at: null
+approved_at: "2026-09-20T20:32:38Z"
 planner_agent: "Claude Code"
 planner_model: "anthropic/claude-opus-5"
 triggered_by: user                 # user | agent:<agent-name>
@@ -27,7 +27,7 @@ requirements_count: 12
 steps_count: 9
 acceptance_criteria_count: 18
 blocking_decisions: 0
-build_ready: false
+build_ready: true
 web_research_used: false
 confidence: high                  # high | medium | low
 
@@ -869,6 +869,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | Timestamp (UTC) | Plan status | Change | Reason | Requested/approved by |
 |---|---|---|---|---|
 | 2026-09-20T20:21:39Z | draft | Plan created | User asked to plan `REV-00001-MAJ-01` with `REV-00001-MED-06` first, and answered the four design questions (D-01 to D-04) | User |
+| 2026-09-20T20:32:38Z | approved | Plan approved without amendment; `build_ready` set. The draft was committed by the planner as `0838c15`, as for PLAN-00001 | User replied "I approve. Please implement." | User |
 
 ## 19. External references
 
