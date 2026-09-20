@@ -38,7 +38,7 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00003-session-integrity-and-reliability"
 execution_started_at: "2026-09-20T23:18:41Z"
-execution_updated_at: "2026-09-20T23:23:10Z"
+execution_updated_at: "2026-09-20T23:39:23Z"
 execution_completed_at: null
 current_step: "PLAN-00003-STEP-02"
 ---
@@ -736,6 +736,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 |---|---|---|---|---|
 | 2026-09-20T23:18:41Z | STEP-01 | Execution started on the approved plan; baseline confirmed | Verification results rows 1-2 | STEP-02: the session write path |
 | 2026-09-20T23:23:10Z | STEP-02 | FNV-1a replaces `DefaultHasher`, with a one-time rename from the old name; `save` writes a `.json.tmp` file with mode 0600 and renames it, and narrows the folder to 0700; `prune_expired` uses modification times and skips unreadable entries; `list` returns the paths it skipped; `src/lib.rs` prunes only when the invocation uses session memory and reports skipped files | src/session.rs, src/lib.rs, tests/mock_ollama.rs | STEP-03: configurable timeouts |
+| 2026-09-20T23:39:23Z | STEP-02 | User reported four core files in the repository root. They came from `MockOllamaServer`: its `Drop` opened a connection to wake the accept loop, the server thread read an empty request and panicked, and `Drop` then panicked joining it, which aborts a process that is already unwinding a failed test. The server now stops on an atomic flag, `read_http_request` returns `None` for an empty connection, and `Drop` never panics. The four core files (290 MB) were deleted | tests/mock_ollama.rs | STEP-03: configurable timeouts |
 
 ### Deviations and blockers
 
@@ -743,6 +744,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 |---|---|---|---|---|
 | 2026-09-20T23:18:41Z | STEP-01 | Plan section 3 gives `src/shell.rs` as 88.24%, which was its figure before PLAN-00002; the measured value is 93.14%. Every other figure, including the 90.62% total, matches exactly | None; the stated total and the per-file floors in REQ-11 are unaffected | None; planner error in a non-binding figure |
 | 2026-09-20T23:23:10Z | STEP-02 | Two pre-existing tests asserted the parse-based pruning that D-03 replaces: `session::tests::prunes_expired_sessions` and `session_commands_list_show_and_prune` both wrote a file whose newest turn was old. Both now set the file modification time instead, which is what the approved decision prunes on | None on scope; the tests assert the approved behaviour rather than the replaced one | None; required by D-03 |
+| 2026-09-20T23:39:23Z | STEP-02 | A test-harness fix outside the seven findings: every failing integration test was aborting the process and writing a 72 MB core file, which would have kept happening through the rest of this plan. Made on the STEP-02 branch state rather than as a new step | None on scope; no production code changed, and the harness is one the plan extends at every step | None; reported to the user |
 
 ### Verification results
 
@@ -753,6 +755,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:23:10Z | STEP-02 | Test first: the six new tests before the implementation | fail as expected | Compilation failed on `legacy_path_hash` and on the new `list` signature |
 | 2026-09-20T23:23:10Z | STEP-02 | `just check` | pass | Exit 0; 151 tests (110 unit, 41 integration); `src/session.rs` 90.95% lines (floor 90%); total 91.15%, up from 90.62% |
 | 2026-09-20T23:23:10Z | STEP-02 | A v0.4.0 session file loaded by the built binary | pass | `--session-show` printed the stored turn unchanged, including its `risk` field |
+| 2026-09-20T23:39:23Z | STEP-02 | A deliberately failing test, before and after the harness fix | pass | Before: SIGABRT and a 72 MB `core.<pid>` in the repository root. After: the test reports its failure and no core file is written |
 
 ### Completion summary
 

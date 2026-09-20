@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -1525,6 +1525,7 @@ queries = {benchmark_queries:?}
 struct MockOllamaServer {
     base_url: String,
     handle: Option<thread::JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl MockOllamaServer {
@@ -1536,36 +1537,50 @@ impl MockOllamaServer {
         let address = listener.local_addr().expect("address should resolve");
         let base_url = format!("http://{}", address);
 
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let stopping = shutdown.clone();
         let handle = thread::spawn(move || {
-            for response in responses {
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(10));
-                        }
-                        Err(error) => panic!("request should arrive: {error}"),
+            // Only a real request consumes a queued response, and the
+            // shutdown flag is checked between polls, so the thread ends on
+            // its own when the server is dropped. Nothing here may panic
+            // once a test is already failing: a panic while unwinding
+            // aborts the process and writes a 70 MB core file instead of
+            // reporting the test failure.
+            let mut index = 0;
+            while index < responses.len() {
+                if stopping.load(Ordering::Relaxed) {
+                    return;
+                }
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
                     }
+                    Err(_) => return,
                 };
-                let request = read_http_request(&mut stream);
+                let Some(request) = read_http_request(&mut stream) else {
+                    continue;
+                };
                 capture.lock().expect("capture should lock").push(request);
-                let payload = response.body;
+                let payload = responses[index].body.clone();
                 let http = format!(
                     "HTTP/1.1 {} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response.status,
+                    responses[index].status,
                     payload.len(),
                     payload
                 );
-                stream
+                let _ = stream
                     .write_all(http.as_bytes())
-                    .expect("response should write");
-                stream.flush().expect("response should flush");
+                    .and_then(|()| stream.flush());
+                index += 1;
             }
         });
 
         Self {
             base_url,
             handle: Some(handle),
+            shutdown,
         }
     }
 
@@ -1576,10 +1591,11 @@ impl MockOllamaServer {
 
 impl Drop for MockOllamaServer {
     fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = TcpStream::connect(self.base_url.trim_start_matches("http://"))
-                .and_then(|stream| stream.shutdown(Shutdown::Both));
-            handle.join().expect("server thread should join");
+            // Never `expect` here: this runs while a failing test unwinds,
+            // and a panic during unwinding aborts the process.
+            let _ = handle.join();
         }
     }
 }
@@ -1618,14 +1634,16 @@ struct CapturedRequest {
     body: String,
 }
 
-fn read_http_request(stream: &mut std::net::TcpStream) -> CapturedRequest {
+/// Reads one HTTP request, or `None` when the peer sent nothing, which is
+/// what a connection opened only to wake the server looks like.
+fn read_http_request(stream: &mut std::net::TcpStream) -> Option<CapturedRequest> {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
     let mut header_end = None;
     let mut content_length = 0_usize;
 
     loop {
-        let bytes_read = stream.read(&mut chunk).expect("request should read");
+        let bytes_read = stream.read(&mut chunk).ok()?;
         if bytes_read == 0 {
             break;
         }
@@ -1651,18 +1669,18 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> CapturedRequest {
         }
     }
 
-    let header_end = header_end.expect("headers should exist");
+    let header_end = header_end?;
     let headers = String::from_utf8_lossy(&buffer[..header_end]);
-    let first_line = headers.lines().next().expect("request line should exist");
-    let path = first_line
+    let path = headers
+        .lines()
+        .next()?
         .split_whitespace()
-        .nth(1)
-        .expect("path should exist")
+        .nth(1)?
         .to_string();
     let body =
         String::from_utf8_lossy(&buffer[header_end..header_end + content_length]).to_string();
 
-    CapturedRequest { path, body }
+    Some(CapturedRequest { path, body })
 }
 
 /// Sets a file's modification time, which is what pruning looks at.
