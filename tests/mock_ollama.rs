@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cli_bot::{Cli, ColorMode, Prompter, run, run_with_prompter};
+use cli_bot::{Cli, CliBotError, ColorMode, Prompter, run, run_with_prompter};
 
 static TEMP_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
@@ -282,6 +282,11 @@ impl ScriptedPrompter {
         self
     }
 
+    fn with_requests(mut self, answers: impl IntoIterator<Item = &'static str>) -> Self {
+        self.requests = Mutex::new(answers.into_iter().map(ToString::to_string).collect());
+        self
+    }
+
     fn with_confirmations(mut self, answers: impl IntoIterator<Item = bool>) -> Self {
         self.confirmations = Mutex::new(answers.into_iter().collect());
         self
@@ -313,7 +318,10 @@ impl Prompter for ScriptedPrompter {
             .lock()
             .expect("requests should lock")
             .pop_front()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture request from terminal: no script"))
+            // A script that has run out is this harness's end of input.
+            .ok_or_else(|| {
+                anyhow::Error::new(CliBotError::Cancelled).context("the script has run out")
+            })
     }
 
     fn select(&self, prompt: &str, items: &[String], default: usize) -> anyhow::Result<usize> {
@@ -463,6 +471,65 @@ fn touch_command(directory: &Path) -> (String, PathBuf) {
 /// path does not exist, and `rm -f` succeeds on a missing path.
 fn absent_rm_command(directory: &Path) -> String {
     format!("rm -fr {}", path_to_string(&directory.join("absent")))
+}
+
+#[test]
+fn interactive_mode_survives_a_planner_error_and_keeps_asking() {
+    let storage_dir = unique_temp_dir("cli-bot-interactive-recovery");
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server = MockOllamaServer::start(
+        capture.clone(),
+        vec![
+            // The first request gets a reply with no JSON in it at all.
+            MockResponse::generated("I have no idea what you mean"),
+            plan_for("ls -la"),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent().with_requests(["first request", "second request"]);
+    let mut cli = session_cli(config_path, vec![]);
+    cli.interactive = true;
+
+    run_with_prompter(cli, &prompter).expect("end of input ends the session cleanly");
+
+    assert_eq!(
+        capture.lock().expect("capture should lock").len(),
+        2,
+        "the second request must still reach the planner"
+    );
+    // Three prompts: two requests, then the one that ends the session.
+    let requests = prompter
+        .asked()
+        .into_iter()
+        .filter(|entry| matches!(entry, Asked::Request { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1], Asked::Request { error_state: true });
+    assert_eq!(
+        read_default_session(&storage_dir)["turns"]
+            .as_array()
+            .expect("turns should be an array")
+            .len(),
+        1,
+        "only the request that produced a command is remembered"
+    );
+}
+
+#[test]
+fn a_planner_error_outside_interactive_mode_is_still_fatal() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated("no json here")],
+    );
+    let config_path = ConfigOptions::default().write(server.base_url());
+
+    let error = run_with_prompter(
+        sample_cli(config_path, vec!["do something"]),
+        &ScriptedPrompter::silent(),
+    )
+    .expect_err("a single request has nowhere to recover to");
+
+    assert!(format!("{error:#}").contains("did not contain a JSON object"));
 }
 
 #[test]

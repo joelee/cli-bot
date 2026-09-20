@@ -1,5 +1,6 @@
 mod config;
 mod environment;
+pub mod error;
 mod llm;
 mod output;
 mod planner;
@@ -19,6 +20,8 @@ use clap::Parser;
 
 use crate::config::{AppConfig, ModelsBenchmarkConfig, is_known_editor, resolve_config_path};
 use crate::environment::{PackageManagerSource, resolve_environment};
+pub use crate::error::CliBotError;
+use crate::error::kind_of;
 use crate::llm::{OllamaBenchmarkMetadata, OllamaClient};
 pub use crate::output::{ColorMode, OutputStyler};
 use crate::planner::{CommandPlan, PlannedCommand, recommended_command};
@@ -320,7 +323,9 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
                 Some(request) => request,
                 None => match prompter.read_request(prompt_in_error_state) {
                     Ok(request) => request,
-                    Err(error) if interactive_prompt_cancelled(&error) => return Ok(()),
+                    Err(error) if kind_of(&error) == Some(CliBotError::Cancelled) => {
+                        return Ok(());
+                    }
                     Err(error) => return Err(error),
                 },
             };
@@ -336,7 +341,7 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
                     prompt_in_error_state = false;
                 }
                 Err(error) => {
-                    handle_interactive_request_error(&error, show_output, &output)?;
+                    handle_interactive_request_error(error, show_output, &output)?;
                     prompt_in_error_state = true;
                 }
             }
@@ -472,15 +477,17 @@ fn run_single_request(
     }
 
     let planning_start = Instant::now();
-    let plan = planner.plan_commands(
-        request,
-        &config.safety.destructive_substrings,
-        preferred_editor,
-        resolved_environment,
-        session_context.as_deref(),
-        verbose,
-        output,
-    )?;
+    let plan = planner
+        .plan_commands(
+            request,
+            &config.safety.destructive_substrings,
+            preferred_editor,
+            resolved_environment,
+            session_context.as_deref(),
+            verbose,
+            output,
+        )
+        .map_err(|error| error.context(CliBotError::Planner))?;
     let mut planning_elapsed = planning_start.elapsed();
 
     if cli.print_plan && show_output {
@@ -503,14 +510,16 @@ fn run_single_request(
             );
         }
         let response_start = Instant::now();
-        let text_response = planner.answer_unresolved(
-            request,
-            preferred_editor,
-            resolved_environment,
-            session_context.as_deref(),
-            verbose,
-            output,
-        )?;
+        let text_response = planner
+            .answer_unresolved(
+                request,
+                preferred_editor,
+                resolved_environment,
+                session_context.as_deref(),
+                verbose,
+                output,
+            )
+            .map_err(|error| error.context(CliBotError::Planner))?;
         planning_elapsed += response_start.elapsed();
 
         if let Some(record) = session_record.as_mut()
@@ -1673,25 +1682,33 @@ fn should_quit_interactive(request: &str) -> bool {
     request.trim() == "/quit"
 }
 
-fn interactive_prompt_cancelled(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .contains("failed to capture request from terminal")
-}
-
+/// What interactive mode does with an error: `Ok(())` to print it and ask
+/// again, `Err` to end the session. A failed command and a planner that
+/// could not answer are both ordinary events at a prompt; anything else,
+/// such as an unreadable config, is fatal.
 fn handle_interactive_request_error(
-    error: &anyhow::Error,
+    error: anyhow::Error,
     show_output: bool,
     output: &OutputStyler,
 ) -> Result<()> {
-    if error.to_string().contains("command exited with status") {
-        if show_output {
-            println!("{} {error}", output.error("Error:"));
+    match kind_of(&error) {
+        Some(CliBotError::CommandFailed { .. }) | Some(CliBotError::Planner) => {
+            if show_output {
+                println!("{} {error:#}", output.error("Error:"));
+            }
+            Ok(())
         }
-        return Ok(());
+        _ => Err(error),
     }
+}
 
-    Err(anyhow::Error::msg(error.to_string()))
+/// The status the process exits with. A command that failed lends the shell
+/// its own status; everything else is cli-bot's own failure.
+pub fn exit_code(error: &anyhow::Error) -> i32 {
+    match kind_of(error) {
+        Some(CliBotError::CommandFailed { status: Some(code) }) => code,
+        _ => 1,
+    }
 }
 
 pub(crate) fn normalize_request(request: String) -> Result<String> {
@@ -1719,7 +1736,9 @@ fn select_command<'a>(
     prompter: &dyn Prompter,
 ) -> Result<&'a PlannedCommand> {
     if plan.commands.is_empty() {
-        bail!("planner returned no commands")
+        return Err(
+            anyhow::Error::new(CliBotError::Planner).context("planner returned no commands")
+        );
     }
 
     if plan.commands.len() == 1 {
@@ -1793,18 +1812,19 @@ mod tests {
     use super::{
         BenchmarkHostInfo, Cli, ModelBenchmarkResult, apply_model_override,
         benchmark_output_is_stdout, collect_benchmark_host_info, command_output,
-        compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell, format_bytes_from_kib,
-        format_bytes_from_mib, format_command_plan_response, format_success_rate,
-        handle_interactive_request_error, handle_session_command, interactive_entry_hint,
-        interactive_prompt_cancelled, normalize_request, parse_mem_total_kib,
-        print_benchmark_report, render_models_benchmark_markdown, resolve_request,
-        run_models_benchmark, select_command, should_quit_interactive,
+        compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell, exit_code,
+        format_bytes_from_kib, format_bytes_from_mib, format_command_plan_response,
+        format_success_rate, handle_interactive_request_error, handle_session_command,
+        interactive_entry_hint, normalize_request, parse_mem_total_kib, print_benchmark_report,
+        render_models_benchmark_markdown, resolve_request, run_models_benchmark, select_command,
+        should_quit_interactive,
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
         SafetyConfig, SessionMemoryConfig, SessionScope, UiConfig,
     };
     use crate::environment::{OperatingSystem, ResolvedEnvironment};
+    use crate::error::CliBotError;
     use crate::llm::OllamaBenchmarkMetadata;
     use crate::output::{ColorMode, OutputStyler};
     use crate::planner::{CommandPlan, PlannedCommand};
@@ -1993,32 +2013,64 @@ mod tests {
     }
 
     #[test]
-    fn interactive_prompt_cancelled_matches_prompt_error() {
-        let error = anyhow::anyhow!("failed to capture request from terminal: interrupted");
-        assert!(interactive_prompt_cancelled(&error));
+    fn interactive_mode_asks_again_after_a_recoverable_error() {
+        let output = OutputStyler::new(ColorMode::Never);
 
-        let other_error = anyhow::anyhow!("failed to read request from stdin");
-        assert!(!interactive_prompt_cancelled(&other_error));
+        for kind in [
+            CliBotError::CommandFailed { status: Some(7) },
+            CliBotError::Planner,
+        ] {
+            handle_interactive_request_error(
+                anyhow::Error::new(kind).context("while running the request"),
+                false,
+                &output,
+            )
+            .unwrap_or_else(|_| panic!("{kind} should return the prompt, not end the session"));
+        }
     }
 
     #[test]
-    fn interactive_request_handler_swallows_command_exit_errors() {
+    fn interactive_mode_ends_on_a_fatal_error() {
         let output = OutputStyler::new(ColorMode::Never);
-        let error = anyhow::anyhow!("command exited with status 7");
+        let error = anyhow::anyhow!("failed to read config file");
 
-        handle_interactive_request_error(&error, false, &output)
-            .expect("command exit errors should be recoverable in interactive mode");
+        let propagated = handle_interactive_request_error(error, false, &output)
+            .expect_err("an error with no kind is fatal");
+
+        assert!(
+            propagated
+                .to_string()
+                .contains("failed to read config file")
+        );
     }
 
     #[test]
-    fn interactive_request_handler_propagates_non_command_errors() {
+    fn a_cancelled_prompt_is_not_swallowed_by_the_error_handler() {
         let output = OutputStyler::new(ColorMode::Never);
-        let error = anyhow::anyhow!("failed to contact Ollama");
+        let error = anyhow::Error::new(CliBotError::Cancelled);
 
-        let propagated = handle_interactive_request_error(&error, false, &output)
-            .expect_err("non-command failures should still be fatal");
+        // The loop returns `Ok(())` on `Cancelled` itself, before it ever
+        // reaches this handler; the handler must not treat it as ordinary.
+        handle_interactive_request_error(error, false, &output)
+            .expect_err("cancellation is not a recoverable request error");
+    }
 
-        assert!(propagated.to_string().contains("failed to contact Ollama"));
+    #[test]
+    fn the_exit_code_is_the_commands_own() {
+        assert_eq!(
+            exit_code(&anyhow::Error::new(CliBotError::CommandFailed {
+                status: Some(3)
+            })),
+            3
+        );
+        assert_eq!(
+            exit_code(&anyhow::Error::new(CliBotError::CommandFailed {
+                status: None
+            })),
+            1
+        );
+        assert_eq!(exit_code(&anyhow::Error::new(CliBotError::Planner)), 1);
+        assert_eq!(exit_code(&anyhow::anyhow!("no config file found")), 1);
     }
 
     #[test]

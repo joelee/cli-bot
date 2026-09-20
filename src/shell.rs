@@ -1,9 +1,10 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::config::ExecutionConfig;
+use crate::error::CliBotError;
 
 pub struct ExecutionResult {
     pub duration: Duration,
@@ -36,7 +37,10 @@ pub fn execute(
         }
 
         if !output.status.success() {
-            bail!("command exited with status {}", output.status)
+            return Err(CliBotError::CommandFailed {
+                status: output.status.code(),
+            }
+            .into());
         }
 
         return Ok(ExecutionResult {
@@ -54,7 +58,10 @@ pub fn execute(
         .with_context(|| format!("failed to launch shell `{}`", config.shell))?;
 
     if !status.success() {
-        bail!("command exited with status {status}")
+        return Err(CliBotError::CommandFailed {
+            status: status.code(),
+        }
+        .into());
     }
 
     Ok(ExecutionResult {
@@ -90,6 +97,7 @@ fn truncate_output(output: String, max_output_bytes: usize) -> String {
 mod tests {
     use super::{execute, truncate_output};
     use crate::config::ExecutionConfig;
+    use crate::error::CliBotError;
 
     #[test]
     fn truncates_large_output() {
@@ -127,7 +135,10 @@ mod tests {
 
         match execute("exit 7", &config, false, 0) {
             Ok(_) => panic!("command should fail"),
-            Err(error) => assert!(error.to_string().contains("command exited with status")),
+            Err(error) => assert_eq!(
+                crate::error::kind_of(&error),
+                Some(CliBotError::CommandFailed { status: Some(7) })
+            ),
         }
     }
 
@@ -141,7 +152,10 @@ mod tests {
 
         match execute("printf 'oops' >&2; exit 2", &config, true, 100) {
             Ok(_) => panic!("captured command should fail"),
-            Err(error) => assert!(error.to_string().contains("command exited with status")),
+            Err(error) => assert_eq!(
+                crate::error::kind_of(&error),
+                Some(CliBotError::CommandFailed { status: Some(2) })
+            ),
         }
     }
 }

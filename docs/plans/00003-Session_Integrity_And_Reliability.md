@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00003-session-integrity-and-reliability"
 execution_started_at: "2026-09-20T23:18:41Z"
-execution_updated_at: "2026-09-20T23:41:47Z"
+execution_updated_at: "2026-09-20T23:45:28Z"
 execution_completed_at: null
-current_step: "PLAN-00003-STEP-03"
+current_step: "PLAN-00003-STEP-04"
 ---
 
 # Delivery Plan 00003: Session Integrity And Reliability
@@ -722,7 +722,7 @@ because its publish dry run needs a clean tree.
 | PLAN-00003-STEP-01 | completed | 2026-09-20T23:18:41Z | 2026-09-20T23:18:41Z | Verification results rows 1-2 | One stale figure in section 3; see Deviations |
 | PLAN-00003-STEP-02 | completed | 2026-09-20T23:23:10Z | 2026-09-20T23:23:10Z | Verification results rows 3-5 | Permissions tighten on the next write, as D-05 specifies; a file only read keeps its mode |
 | PLAN-00003-STEP-03 | completed | 2026-09-20T23:41:47Z | 2026-09-20T23:41:47Z | Verification results rows 8-9 | A v0.4.0 config gets both defaults; asserted in `src/config.rs` |
-| PLAN-00003-STEP-04 | not-started | — | — | — | — |
+| PLAN-00003-STEP-04 | completed | 2026-09-20T23:45:28Z | 2026-09-20T23:45:28Z | Verification results rows 10-11 | Message-text decisions gone from production code; see Deviations for AC-07 |
 | PLAN-00003-STEP-05 | not-started | — | — | — | — |
 | PLAN-00003-STEP-06 | not-started | — | — | — | — |
 | PLAN-00003-STEP-07 | not-started | — | — | — | — |
@@ -738,6 +738,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:23:10Z | STEP-02 | FNV-1a replaces `DefaultHasher`, with a one-time rename from the old name; `save` writes a `.json.tmp` file with mode 0600 and renames it, and narrows the folder to 0700; `prune_expired` uses modification times and skips unreadable entries; `list` returns the paths it skipped; `src/lib.rs` prunes only when the invocation uses session memory and reports skipped files | src/session.rs, src/lib.rs, tests/mock_ollama.rs | STEP-03: configurable timeouts |
 | 2026-09-20T23:39:23Z | STEP-02 | User reported four core files in the repository root. They came from `MockOllamaServer`: its `Drop` opened a connection to wake the accept loop, the server thread read an empty request and panicked, and `Drop` then panicked joining it, which aborts a process that is already unwinding a failed test. The server now stops on an atomic flag, `read_http_request` returns `None` for an empty connection, and `Drop` never panics. The four core files (290 MB) were deleted | tests/mock_ollama.rs | STEP-03: configurable timeouts |
 | 2026-09-20T23:41:47Z | STEP-03 | Added `[ollama] request_timeout_seconds` (300) and `connect_timeout_seconds` (10) with serde defaults, built the client from them with `0` meaning no limit, printed both in verbose output, and documented them in `cli-bot.toml`. The mock server gained an optional reply delay, slept in slices so dropping it does not wait out a delay the client already abandoned | src/config.rs, src/llm.rs, src/lib.rs, cli-bot.toml, tests/mock_ollama.rs | STEP-04: typed errors |
+| 2026-09-20T23:45:28Z | STEP-04 | Added `src/error.rs` with `CliBotError` and `kind_of`; the planner path attaches `Planner`, `shell::execute` returns `CommandFailed` with the status, and an ended prompt returns `Cancelled`. `interactive_prompt_cancelled` and the text match in `handle_interactive_request_error` are gone, with their tests replaced by typed ones. Interactive mode now returns the prompt after a planner error, and an exhausted script in the test harness means end of input | src/error.rs, src/lib.rs, src/prompt.rs, src/shell.rs, tests/mock_ollama.rs | STEP-05: exit status and the failed turn |
 
 ### Deviations and blockers
 
@@ -746,6 +747,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:18:41Z | STEP-01 | Plan section 3 gives `src/shell.rs` as 88.24%, which was its figure before PLAN-00002; the measured value is 93.14%. Every other figure, including the 90.62% total, matches exactly | None; the stated total and the per-file floors in REQ-11 are unaffected | None; planner error in a non-binding figure |
 | 2026-09-20T23:23:10Z | STEP-02 | Two pre-existing tests asserted the parse-based pruning that D-03 replaces: `session::tests::prunes_expired_sessions` and `session_commands_list_show_and_prune` both wrote a file whose newest turn was old. Both now set the file modification time instead, which is what the approved decision prunes on | None on scope; the tests assert the approved behaviour rather than the replaced one | None; required by D-03 |
 | 2026-09-20T23:39:23Z | STEP-02 | A test-harness fix outside the seven findings: every failing integration test was aborting the process and writing a 72 MB core file, which would have kept happening through the rest of this plan. Made on the STEP-02 branch state rather than as a new step | None on scope; no production code changed, and the harness is one the plan extends at every step | None; reported to the user |
+| 2026-09-20T23:45:28Z | STEP-04 | AC-07 asks that `git grep -n "to_string().contains" src/` find nothing. No production code decides anything by message text any more, which is what REQ-05 requires, but eight test assertions still check message wording. The two that asserted an error *kind*, in `src/shell.rs`, now assert the kind itself; the rest check genuine message content, such as `--model must not be empty`, and are left | AC-07 is met for production code, which is what the finding is about | User, at hand-off |
 
 ### Verification results
 
@@ -759,12 +761,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:39:23Z | STEP-02 | A deliberately failing test, before and after the harness fix | pass | Before: SIGABRT and a 72 MB `core.<pid>` in the repository root. After: the test reports its failure and no core file is written |
 | 2026-09-20T23:41:47Z | STEP-03 | Test first: the builder, zero-means-no-limit, and slow-server tests before the fields existed | fail as expected | Compilation failed on `optional_timeout` and the two unknown `OllamaConfig` fields |
 | 2026-09-20T23:41:47Z | STEP-03 | `just check`; the slow-planner test three times | pass | Exit 0; 154 tests; `src/llm.rs` 95.46%; total 91.21%; the timeout test took 1.02s on all three runs |
+| 2026-09-20T23:45:28Z | STEP-04 | Test first: the round-trip, interactive-recovery, and fatal-error tests before `src/error.rs` existed | fail as expected | Compilation failed on the unknown `CliBotError` |
+| 2026-09-20T23:45:28Z | STEP-04 | `just check` | pass | Exit 0; 160 tests (116 unit, 44 integration); `src/error.rs` 100%, `src/shell.rs` 90.91%, `src/lib.rs` 92.40%; total 91.51% |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00003-REQ-01 to REQ-04, REQ-09
-- **Incomplete requirements:** REQ-05 to REQ-08, REQ-10, REQ-11
+- **Completed requirements:** PLAN-00003-REQ-01 to REQ-06, REQ-09
+- **Incomplete requirements:** REQ-07, REQ-08, REQ-10, REQ-11
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
