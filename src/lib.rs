@@ -130,8 +130,15 @@ pub fn run_with_prompter(cli: Cli, prompter: &dyn Prompter) -> Result<()> {
     apply_model_override(&mut config, cli.model.as_deref())?;
     let resolved_environment = resolve_environment(&config.environment)?;
     let session_store = SessionStore::new(config.session_memory.clone())?;
-    let pruned_sessions = session_store.prune_expired()?;
     let session_requested = !cli.no_session && session_store.enabled();
+    // Pruning touches the sessions folder, so an invocation that does not
+    // use session memory must not do it: `--no-session` and `--check` have
+    // no business failing over somebody else's session file.
+    let pruned_sessions = if session_requested {
+        session_store.prune_expired()?
+    } else {
+        0
+    };
     let session_name = if session_requested {
         cli.session.as_deref().and_then(|value| {
             let trimmed = value.trim();
@@ -697,7 +704,15 @@ fn handle_session_command(
     }
 
     if cli.session_list {
-        let entries = session_store.list()?;
+        let (entries, skipped) = session_store.list()?;
+        for path in &skipped {
+            eprintln!(
+                "{}",
+                output.stderr_dim(&format!(
+                    "[verbose] skipped unreadable session file: {path}"
+                ))
+            );
+        }
         if show_output {
             if entries.is_empty() {
                 println!("{}", output.dim("No stored sessions."));

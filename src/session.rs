@@ -2,6 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -37,6 +38,7 @@ impl SessionStore {
         let session_name = requested_name.unwrap_or(self.default_name());
         let session_name = normalize_session_name(session_name)?;
         let session_path = self.path_for_session(&session_name)?;
+        self.adopt_legacy_session_file(&session_name, &session_path)?;
 
         if !session_path.is_file() {
             return Ok(SessionRecord::new(
@@ -60,32 +62,42 @@ impl SessionStore {
         Ok(record)
     }
 
-    pub fn list(&self) -> Result<Vec<SessionListEntry>> {
+    /// Lists the stored sessions, with the paths it could not read or parse
+    /// as the second value. One unreadable file must never stop a listing:
+    /// it may be the one the user is trying to clear.
+    pub fn list(&self) -> Result<(Vec<SessionListEntry>, Vec<String>)> {
         let sessions_dir = resolve_storage_root(&self.config)?.join("sessions");
 
         if !sessions_dir.is_dir() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let mut entries = Vec::new();
+        let mut skipped = Vec::new();
         for directory_entry in fs::read_dir(&sessions_dir).with_context(|| {
             format!(
                 "failed to read session directory `{}`",
                 sessions_dir.display()
             )
         })? {
-            let directory_entry = directory_entry.with_context(|| {
-                format!("failed to read an entry from `{}`", sessions_dir.display())
-            })?;
+            let Ok(directory_entry) = directory_entry else {
+                continue;
+            };
             let path = directory_entry.path();
             if path.extension().and_then(|value| value.to_str()) != Some("json") {
                 continue;
             }
 
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read session file `{}`", path.display()))?;
-            let record = serde_json::from_str::<SessionRecord>(&raw)
-                .with_context(|| format!("failed to parse session file `{}`", path.display()))?;
+            let record = match fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<SessionRecord>(&raw).ok())
+            {
+                Some(record) => record,
+                None => {
+                    skipped.push(path.display().to_string());
+                    continue;
+                }
+            };
             let last_updated_epoch_ms = record
                 .turns
                 .last()
@@ -113,8 +125,9 @@ impl SessionStore {
                 .cmp(&left.last_updated_epoch_ms)
                 .then_with(|| left.scoped_name.cmp(&right.scoped_name))
         });
+        skipped.sort();
 
-        Ok(entries)
+        Ok((entries, skipped))
     }
 
     pub fn save(&self, record: &mut SessionRecord) -> Result<()> {
@@ -133,9 +146,26 @@ impl SessionStore {
         fs::create_dir_all(parent).with_context(|| {
             format!("failed to create session directory `{}`", parent.display())
         })?;
+        restrict_directory(parent)?;
         let payload =
             serde_json::to_string_pretty(record).context("failed to serialize session")?;
-        fs::write(&session_path, payload)
+
+        // Written beside the target and renamed over it, so an interrupted
+        // write cannot leave a half-written session behind. The replacement
+        // also carries the owner-only mode, which tightens a file an earlier
+        // version left readable by everyone.
+        let temporary_path = session_path.with_extension("json.tmp");
+        let mut file = owner_only_file(&temporary_path)?;
+        file.write_all(payload.as_bytes())
+            .and_then(|()| file.sync_all())
+            .with_context(|| {
+                format!(
+                    "failed to write session file `{}`",
+                    temporary_path.display()
+                )
+            })?;
+        drop(file);
+        fs::rename(&temporary_path, &session_path)
             .with_context(|| format!("failed to write session file `{}`", session_path.display()))
     }
 
@@ -160,9 +190,14 @@ impl SessionStore {
             None => return Ok(0),
         };
 
-        let cutoff = current_timestamp_epoch_ms().saturating_sub(
-            Duration::from_secs(retention_days.saturating_mul(24 * 60 * 60)).as_millis(),
-        );
+        // Age comes from the file's modification time, which is what
+        // "not updated in N days" means, and which no unreadable file can
+        // stop us from reading.
+        let cutoff = SystemTime::now()
+            .checked_sub(Duration::from_secs(
+                retention_days.saturating_mul(24 * 60 * 60),
+            ))
+            .unwrap_or(UNIX_EPOCH);
         let sessions_dir = resolve_storage_root(&self.config)?.join("sessions");
         if !sessions_dir.is_dir() {
             return Ok(0);
@@ -175,28 +210,18 @@ impl SessionStore {
                 sessions_dir.display()
             )
         })? {
-            let directory_entry = directory_entry.with_context(|| {
-                format!("failed to read an entry from `{}`", sessions_dir.display())
-            })?;
+            let Ok(directory_entry) = directory_entry else {
+                continue;
+            };
             let path = directory_entry.path();
             if path.extension().and_then(|value| value.to_str()) != Some("json") {
                 continue;
             }
+            let Ok(modified) = directory_entry.metadata().and_then(|data| data.modified()) else {
+                continue;
+            };
 
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read session file `{}`", path.display()))?;
-            let record = serde_json::from_str::<SessionRecord>(&raw)
-                .with_context(|| format!("failed to parse session file `{}`", path.display()))?;
-            let last_updated_epoch_ms = record
-                .turns
-                .last()
-                .map(|turn| turn.timestamp_epoch_ms)
-                .unwrap_or(0);
-
-            if last_updated_epoch_ms < cutoff {
-                fs::remove_file(&path).with_context(|| {
-                    format!("failed to remove expired session file `{}`", path.display())
-                })?;
+            if modified < cutoff && fs::remove_file(&path).is_ok() {
                 removed += 1;
             }
         }
@@ -279,6 +304,34 @@ impl SessionStore {
 
     pub fn should_capture_command_output(&self) -> bool {
         self.config.capture_command_output
+    }
+
+    /// Moves a session written under the `DefaultHasher` name of an earlier
+    /// version to its current name, once. Only working-directory sessions
+    /// carry a hash, and the old name is derived from this same directory,
+    /// so it can only ever match this directory's own file.
+    fn adopt_legacy_session_file(&self, session_name: &str, session_path: &Path) -> Result<()> {
+        if self.config.scope != SessionScope::WorkingDirectory || session_path.is_file() {
+            return Ok(());
+        }
+
+        let legacy_path = resolve_storage_root(&self.config)?
+            .join("sessions")
+            .join(format!(
+                "{session_name}-{}.json",
+                legacy_path_hash(&self.cwd)
+            ));
+        if !legacy_path.is_file() {
+            return Ok(());
+        }
+
+        fs::rename(&legacy_path, session_path).with_context(|| {
+            format!(
+                "failed to rename session file `{}` to `{}`",
+                legacy_path.display(),
+                session_path.display()
+            )
+        })
     }
 
     fn path_for_session(&self, session_name: &str) -> Result<PathBuf> {
@@ -479,10 +532,61 @@ fn resolve_storage_root(config: &SessionMemoryConfig) -> Result<PathBuf> {
     }
 }
 
+/// FNV-1a. `DefaultHasher` would be shorter, but the standard library
+/// reserves the right to change its algorithm, and the name of a session
+/// file has to survive a toolchain upgrade.
 fn stable_path_hash(path: &Path) -> String {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = OFFSET_BASIS;
+    for byte in path.display().to_string().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    format!("{hash:016x}")
+}
+
+/// The name versions up to v0.4.0 used. Only read, to migrate a file once.
+fn legacy_path_hash(path: &Path) -> String {
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// Creates or replaces a file that only its owner can read, on Unix.
+fn owner_only_file(path: &Path) -> Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .with_context(|| format!("failed to create session file `{}`", path.display()))
+}
+
+/// Narrows the session directory to its owner on Unix, leaving a directory
+/// that is already at least as narrow alone.
+fn restrict_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let permissions = fs::metadata(path)
+            .with_context(|| format!("failed to read `{}`", path.display()))?
+            .permissions();
+        if permissions.mode() & 0o077 != 0 {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
+                format!("failed to restrict session directory `{}`", path.display())
+            })?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 fn current_timestamp_epoch_ms() -> u128 {
@@ -528,10 +632,11 @@ mod tests {
         SessionCommandChoice, SessionExecution, SessionRecord, SessionStore, SessionTurn,
         current_timestamp_epoch_ms, normalize_session_name, summarize_text, truncate_to_bytes,
     };
+    use super::{legacy_path_hash, stable_path_hash};
     use crate::config::{SessionMemoryConfig, SessionScope};
     use std::env;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -671,11 +776,12 @@ mod tests {
         });
         store.save(&mut record).expect("session should save");
 
-        let entries = store.list().expect("sessions should list");
+        let (entries, skipped) = store.list().expect("sessions should list");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "default");
         assert_eq!(entries[0].turns, 1);
+        assert!(skipped.is_empty());
 
         fs::remove_dir_all(&temp_root).expect("temp root should be removed");
     }
@@ -701,8 +807,7 @@ mod tests {
             PathBuf::from("/tmp/project"),
         );
         record.push_turn(SessionTurn {
-            timestamp_epoch_ms: current_timestamp_epoch_ms()
-                .saturating_sub(Duration::from_secs(3 * 24 * 60 * 60).as_millis()),
+            timestamp_epoch_ms: current_timestamp_epoch_ms(),
             request: "old request".into(),
             working_directory: None,
             plan_summary: None,
@@ -716,11 +821,22 @@ mod tests {
             execution: None,
         });
         store.save(&mut record).expect("session should save");
+        // Age is the file's own, not the newest turn's.
+        let stored = fs::read_dir(temp_root.join("sessions"))
+            .expect("sessions dir should exist")
+            .filter_map(|entry| entry.ok())
+            .next()
+            .expect("one session file should exist")
+            .path();
+        filetime_set(
+            &stored,
+            SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60),
+        );
 
         let removed = store.prune_expired().expect("prune should succeed");
 
         assert_eq!(removed, 1);
-        assert!(store.list().expect("sessions should list").is_empty());
+        assert!(store.list().expect("sessions should list").0.is_empty());
 
         fs::remove_dir_all(&temp_root).expect("temp root should be removed");
     }
@@ -821,5 +937,205 @@ mod tests {
 
     fn sample_store() -> SessionStore {
         SessionStore::new(SessionMemoryConfig::default()).expect("store should initialize")
+    }
+
+    /// A store whose files live in a fresh temporary folder, so a test never
+    /// touches the real session directory.
+    fn store_in(directory: &Path, scope: SessionScope) -> SessionStore {
+        SessionStore::new(SessionMemoryConfig {
+            storage_dir: directory.display().to_string(),
+            scope,
+            ..SessionMemoryConfig::default()
+        })
+        .expect("store should initialize")
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let path = env::temp_dir().join(format!("cli-bot-{name}-{unique}"));
+        fs::create_dir_all(&path).expect("temp dir should be created");
+        path
+    }
+
+    fn record_with_one_turn(name: &str) -> SessionRecord {
+        let mut record = SessionRecord::new(
+            name.to_string(),
+            SessionScope::Global,
+            PathBuf::from("/tmp/project"),
+        );
+        record.push_turn(SessionTurn::unresolved_text(
+            "a request",
+            "an answer",
+            false,
+            Path::new("/tmp/project"),
+        ));
+        record
+    }
+
+    #[test]
+    fn saving_leaves_no_temporary_file_behind() {
+        let directory = temp_dir("atomic-save");
+        let store = store_in(&directory, SessionScope::Global);
+        let mut record = record_with_one_turn("default");
+
+        store.save(&mut record).expect("session should save");
+
+        let sessions = directory.join("sessions");
+        let leftovers = fs::read_dir(&sessions)
+            .expect("sessions dir should exist")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| !name.ends_with(".json"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(leftovers, Vec::<String>::new());
+        assert!(sessions.join("default.json").is_file());
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn saving_twice_replaces_the_file_without_losing_the_old_one() {
+        let directory = temp_dir("atomic-replace");
+        let store = store_in(&directory, SessionScope::Global);
+        let mut record = record_with_one_turn("default");
+        store.save(&mut record).expect("first save should succeed");
+        let first = fs::read_to_string(directory.join("sessions/default.json"))
+            .expect("first file should exist");
+
+        record.push_turn(SessionTurn::unresolved_text(
+            "another request",
+            "another answer",
+            false,
+            Path::new("/tmp/project"),
+        ));
+        store.save(&mut record).expect("second save should succeed");
+        let second = fs::read_to_string(directory.join("sessions/default.json"))
+            .expect("second file should exist");
+
+        assert_ne!(first, second);
+        assert_eq!(
+            store.load(None).expect("session should load").turns.len(),
+            2
+        );
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_files_are_owner_only_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = temp_dir("permissions");
+        let store = store_in(&directory, SessionScope::Global);
+        let mut record = record_with_one_turn("default");
+        store.save(&mut record).expect("session should save");
+
+        let sessions = directory.join("sessions");
+        let file = sessions.join("default.json");
+        let mode = |path: &Path| {
+            fs::metadata(path)
+                .expect("metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(&sessions), 0o700, "the folder must be owner-only");
+        assert_eq!(mode(&file), 0o600, "the file must be owner-only");
+
+        // A file left world-readable by an earlier version is tightened when
+        // it is next written.
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644))
+            .expect("permissions should widen");
+        store.save(&mut record).expect("session should save again");
+        assert_eq!(mode(&file), 0o600);
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn listing_skips_a_file_it_cannot_parse() {
+        let directory = temp_dir("list-corrupt");
+        let store = store_in(&directory, SessionScope::Global);
+        let mut record = record_with_one_turn("good");
+        store.save(&mut record).expect("session should save");
+        fs::write(directory.join("sessions/broken.json"), "{\"name\": \"bro")
+            .expect("corrupt file should write");
+
+        let (entries, skipped) = store.list().expect("listing should succeed");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "good");
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].contains("broken.json"), "{skipped:?}");
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn pruning_uses_file_age_and_ignores_unreadable_files() {
+        let directory = temp_dir("prune");
+        let mut config = SessionMemoryConfig {
+            storage_dir: directory.display().to_string(),
+            scope: SessionScope::Global,
+            retention_days: Some(1),
+            ..SessionMemoryConfig::default()
+        };
+        let store = SessionStore::new(config.clone()).expect("store should initialize");
+        let mut fresh = record_with_one_turn("fresh");
+        store.save(&mut fresh).expect("fresh session should save");
+
+        let sessions = directory.join("sessions");
+        let stale = sessions.join("stale.json");
+        fs::write(&stale, "{\"name\": \"stale").expect("stale file should write");
+        // Two days old, and deliberately unparsable: age must not need a parse.
+        let old = SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        filetime_set(&stale, old);
+
+        let removed = store.prune_expired().expect("pruning should succeed");
+
+        assert_eq!(removed, 1);
+        assert!(!stale.exists(), "the stale file should be gone");
+        assert!(sessions.join("fresh.json").is_file(), "the fresh one stays");
+
+        // Without a retention window nothing is removed.
+        config.retention_days = None;
+        let keeper = SessionStore::new(config).expect("store should initialize");
+        assert_eq!(keeper.prune_expired().expect("pruning should succeed"), 0);
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// Sets a file's modification time, which is all `prune_expired` reads.
+    fn filetime_set(path: &Path, time: SystemTime) {
+        let file = fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("file should open");
+        file.set_modified(time).expect("mtime should be settable");
+    }
+
+    #[test]
+    fn a_session_written_under_the_old_name_is_found_once_and_renamed() {
+        let directory = temp_dir("legacy-name");
+        let store = store_in(&directory, SessionScope::WorkingDirectory);
+        let cwd = env::current_dir().expect("cwd should resolve");
+        let sessions = directory.join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions dir should exist");
+
+        let legacy = sessions.join(format!("default-{}.json", legacy_path_hash(&cwd)));
+        let current = sessions.join(format!("default-{}.json", stable_path_hash(&cwd)));
+        assert_ne!(legacy, current, "the two hashes must differ");
+        fs::write(
+            &legacy,
+            serde_json::to_string(&record_with_one_turn("default")).expect("record serialises"),
+        )
+        .expect("legacy file should write");
+
+        let record = store.load(None).expect("session should load");
+
+        assert_eq!(record.turns.len(), 1, "the turns survive the rename");
+        assert!(current.is_file(), "the file moved to the new name");
+        assert!(!legacy.exists(), "the old name is gone");
+        fs::remove_dir_all(&directory).ok();
     }
 }

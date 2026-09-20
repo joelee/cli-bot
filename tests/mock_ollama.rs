@@ -168,6 +168,11 @@ fn session_commands_list_show_and_prune() {
 "#,
     )
     .expect("expired session should write");
+    // Pruning reads the file's modification time, not its newest turn.
+    set_modified(
+        &storage_dir.join("sessions/default-global.json"),
+        SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60),
+    );
 
     let config_path = write_config(
         "http://127.0.0.1:1",
@@ -458,6 +463,81 @@ fn touch_command(directory: &Path) -> (String, PathBuf) {
 /// path does not exist, and `rm -f` succeeds on a missing path.
 fn absent_rm_command(directory: &Path) -> String {
     format!("rm -fr {}", path_to_string(&directory.join("absent")))
+}
+
+#[test]
+fn an_unreadable_session_file_stops_nothing() {
+    let storage_dir = unique_temp_dir("cli-bot-corrupt-session");
+    let sessions = storage_dir.join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions dir should exist");
+    // A hand-edited or half-written file, which used to abort every run.
+    fs::write(sessions.join("broken.json"), "{\"name\": \"bro").expect("corrupt file should write");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            // In the order the test asks for them: the seeding plan, then
+            // the version and tags that `--check` reads.
+            plan_for("ls -la"),
+            MockResponse::json(r#"{"version":"0.6.0"}"#),
+            MockResponse::json(r#"{"models":[{"name":"lfm2:latest"}]}"#),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent();
+
+    // Seed one good session beside the broken one.
+    run_with_prompter(
+        session_cli(config_path.clone(), vec!["list files"]),
+        &prompter,
+    )
+    .expect("a read-only command should run");
+
+    let mut check = sample_cli(config_path.clone(), vec![]);
+    check.check = true;
+    check.no_session = false;
+    run_with_prompter(check, &prompter).expect("--check must not read sessions");
+
+    let mut list = session_cli(config_path.clone(), vec![]);
+    list.session_list = true;
+    run_with_prompter(list, &prompter).expect("--session-list should skip the bad file");
+
+    let mut clear = session_cli(config_path.clone(), vec![]);
+    clear.session_clear = true;
+    run_with_prompter(clear, &prompter).expect("--session-clear should succeed");
+
+    let mut disabled = sample_cli(config_path, vec![]);
+    disabled.session_show = true;
+    let error = run_with_prompter(disabled, &prompter)
+        .expect_err("--no-session with a session command is still rejected");
+    assert!(error.to_string().contains("session memory is disabled"));
+
+    assert!(
+        sessions.join("broken.json").is_file(),
+        "a file the user wrote is theirs; it is skipped, not deleted"
+    );
+}
+
+#[test]
+fn without_session_memory_the_sessions_folder_is_never_touched() {
+    // A storage directory that does not exist: any read or prune would
+    // have to create or walk it.
+    let storage_dir = unique_temp_dir("cli-bot-untouched-sessions");
+    let server =
+        MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for("ls -la")]);
+    let config_path = ConfigOptions {
+        retention_days: Some(1),
+        ..ConfigOptions::with_session(&storage_dir)
+    }
+    .write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["list files"]);
+    cli.no_session = true;
+
+    run_with_prompter(cli, &ScriptedPrompter::silent()).expect("the command should run");
+
+    assert!(
+        !storage_dir.exists(),
+        "nothing may create the sessions folder"
+    );
 }
 
 #[test]
@@ -1583,6 +1663,16 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> CapturedRequest {
         String::from_utf8_lossy(&buffer[header_end..header_end + content_length]).to_string();
 
     CapturedRequest { path, body }
+}
+
+/// Sets a file's modification time, which is what pruning looks at.
+fn set_modified(path: &Path, time: SystemTime) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("session file should open")
+        .set_modified(time)
+        .expect("modification time should be settable");
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

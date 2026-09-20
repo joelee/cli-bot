@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00003-session-integrity-and-reliability"
 execution_started_at: "2026-09-20T23:18:41Z"
-execution_updated_at: "2026-09-20T23:18:41Z"
+execution_updated_at: "2026-09-20T23:23:10Z"
 execution_completed_at: null
-current_step: "PLAN-00003-STEP-01"
+current_step: "PLAN-00003-STEP-02"
 ---
 
 # Delivery Plan 00003: Session Integrity And Reliability
@@ -720,7 +720,7 @@ because its publish dry run needs a clean tree.
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
 | PLAN-00003-STEP-01 | completed | 2026-09-20T23:18:41Z | 2026-09-20T23:18:41Z | Verification results rows 1-2 | One stale figure in section 3; see Deviations |
-| PLAN-00003-STEP-02 | not-started | — | — | — | — |
+| PLAN-00003-STEP-02 | completed | 2026-09-20T23:23:10Z | 2026-09-20T23:23:10Z | Verification results rows 3-5 | Permissions tighten on the next write, as D-05 specifies; a file only read keeps its mode |
 | PLAN-00003-STEP-03 | not-started | — | — | — | — |
 | PLAN-00003-STEP-04 | not-started | — | — | — | — |
 | PLAN-00003-STEP-05 | not-started | — | — | — | — |
@@ -735,12 +735,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
 | 2026-09-20T23:18:41Z | STEP-01 | Execution started on the approved plan; baseline confirmed | Verification results rows 1-2 | STEP-02: the session write path |
+| 2026-09-20T23:23:10Z | STEP-02 | FNV-1a replaces `DefaultHasher`, with a one-time rename from the old name; `save` writes a `.json.tmp` file with mode 0600 and renames it, and narrows the folder to 0700; `prune_expired` uses modification times and skips unreadable entries; `list` returns the paths it skipped; `src/lib.rs` prunes only when the invocation uses session memory and reports skipped files | src/session.rs, src/lib.rs, tests/mock_ollama.rs | STEP-03: configurable timeouts |
 
 ### Deviations and blockers
 
 | Timestamp (UTC) | Step | Deviation or blocker | Impact | Decision required from |
 |---|---|---|---|---|
 | 2026-09-20T23:18:41Z | STEP-01 | Plan section 3 gives `src/shell.rs` as 88.24%, which was its figure before PLAN-00002; the measured value is 93.14%. Every other figure, including the 90.62% total, matches exactly | None; the stated total and the per-file floors in REQ-11 are unaffected | None; planner error in a non-binding figure |
+| 2026-09-20T23:23:10Z | STEP-02 | Two pre-existing tests asserted the parse-based pruning that D-03 replaces: `session::tests::prunes_expired_sessions` and `session_commands_list_show_and_prune` both wrote a file whose newest turn was old. Both now set the file modification time instead, which is what the approved decision prunes on | None on scope; the tests assert the approved behaviour rather than the replaced one | None; required by D-03 |
 
 ### Verification results
 
@@ -748,12 +750,15 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 |---|---|---|---|---|
 | 2026-09-20T23:18:41Z | STEP-01 | `just ci` | pass | Exit 0; 143 tests; lines 4479, missed 420, 90.62%, matching plan section 3 exactly |
 | 2026-09-20T23:18:41Z | STEP-01 | Reference material saved outside the repository | recorded | `--help` (29 lines) for AC-17; a v0.4.0-format session file, including the `risk` field, for AC-14 |
+| 2026-09-20T23:23:10Z | STEP-02 | Test first: the six new tests before the implementation | fail as expected | Compilation failed on `legacy_path_hash` and on the new `list` signature |
+| 2026-09-20T23:23:10Z | STEP-02 | `just check` | pass | Exit 0; 151 tests (110 unit, 41 integration); `src/session.rs` 90.95% lines (floor 90%); total 91.15%, up from 90.62% |
+| 2026-09-20T23:23:10Z | STEP-02 | A v0.4.0 session file loaded by the built binary | pass | `--session-show` printed the stored turn unchanged, including its `risk` field |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** None
-- **Incomplete requirements:** REQ-01 to REQ-11
+- **Completed requirements:** PLAN-00003-REQ-01, REQ-02, REQ-03, REQ-09
+- **Incomplete requirements:** REQ-04 to REQ-08, REQ-10, REQ-11
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
