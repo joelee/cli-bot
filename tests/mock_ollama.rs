@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -8,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cli_bot::{Cli, ColorMode, run};
+use cli_bot::{Cli, ColorMode, Prompter, run, run_with_prompter};
 
 static TEMP_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
@@ -223,6 +224,119 @@ fn session_commands_list_show_and_prune() {
     show_cli.session_show = true;
     show_cli.no_session = false;
     run(show_cli).expect("session show should succeed");
+}
+
+/// What the flow asked the user, in order.
+#[derive(Debug, Clone, PartialEq)]
+enum Asked {
+    Request {
+        error_state: bool,
+    },
+    Select {
+        prompt: String,
+        items: Vec<String>,
+        default: usize,
+    },
+    Confirm {
+        prompt: String,
+        default: bool,
+    },
+}
+
+/// A prompter whose answers are fixed in advance, so a test drives the real
+/// request flow without a terminal. An unscripted question is an error, not a
+/// guess, so a test that expects no prompt fails loudly when one appears.
+struct ScriptedPrompter {
+    requests: Mutex<VecDeque<String>>,
+    selections: Mutex<VecDeque<usize>>,
+    confirmations: Mutex<VecDeque<bool>>,
+    supports_dialogs: bool,
+    asked: Mutex<Vec<Asked>>,
+}
+
+impl ScriptedPrompter {
+    /// Answers nothing: any prompt fails the test.
+    fn silent() -> Self {
+        Self {
+            requests: Mutex::new(VecDeque::new()),
+            selections: Mutex::new(VecDeque::new()),
+            confirmations: Mutex::new(VecDeque::new()),
+            supports_dialogs: true,
+            asked: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn asked(&self) -> Vec<Asked> {
+        self.asked.lock().expect("asked should lock").clone()
+    }
+}
+
+impl Prompter for ScriptedPrompter {
+    fn read_request(&self, error_state: bool) -> anyhow::Result<String> {
+        self.asked
+            .lock()
+            .expect("asked should lock")
+            .push(Asked::Request { error_state });
+        self.requests
+            .lock()
+            .expect("requests should lock")
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture request from terminal: no script"))
+    }
+
+    fn select(&self, prompt: &str, items: &[String], default: usize) -> anyhow::Result<usize> {
+        self.asked
+            .lock()
+            .expect("asked should lock")
+            .push(Asked::Select {
+                prompt: prompt.to_string(),
+                items: items.to_vec(),
+                default,
+            });
+        self.selections
+            .lock()
+            .expect("selections should lock")
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("unscripted selection: {prompt}"))
+    }
+
+    fn confirm(&self, prompt: &str, default: bool) -> anyhow::Result<bool> {
+        self.asked
+            .lock()
+            .expect("asked should lock")
+            .push(Asked::Confirm {
+                prompt: prompt.to_string(),
+                default,
+            });
+        self.confirmations
+            .lock()
+            .expect("confirmations should lock")
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("unscripted confirmation: {prompt}"))
+    }
+
+    fn supports_dialogs(&self) -> bool {
+        self.supports_dialogs
+    }
+}
+
+#[test]
+fn run_with_prompter_drives_the_same_flow_as_run() {
+    let storage_dir = unique_temp_dir("cli-bot-prompter-seam");
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server =
+        MockOllamaServer::start(capture.clone(), vec![MockResponse::generated(PRINTF_PLAN)]);
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent();
+
+    run_with_prompter(session_cli(config_path, vec!["print ok"]), &prompter)
+        .expect("a single planned command should run without any prompt");
+
+    assert_eq!(prompter.asked(), Vec::new());
+    assert_eq!(
+        read_default_session(&storage_dir)["turns"][0]["selected_command"],
+        "printf ok"
+    );
 }
 
 const PRINTF_PLAN: &str = r#"{"summary":"Print ok","unresolved":false,"commands":[{"command":"printf ok","description":"Print ok","potentially_destructive":false,"recommended":true,"rationale":"Harmless"}]}"#;
