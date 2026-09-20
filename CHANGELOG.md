@@ -8,11 +8,21 @@ The format is based on Keep a Changelog.
 
 ### Changed
 
+- **Commands now need approval unless they are recognised as read-only** (PLAN-00002, `REV-00001-MAJ-01`). A command is classified by parsing it into programs: read-only programs run as before, known-destructive ones get a strong prompt, and everything else gets an ordinary prompt. Previously a command ran without a prompt unless the model flagged it or its text contained a configured substring, which let `rm -fr`, `rm -r -f`, `shred`, `curl | sh`, and redirections through
 - Changed the default model to `ornith-1.5:9b` in the default config template; docs now point to `docs/models-benchmark-report-v0.3.2.md` as the report behind that choice
 - Adopted the release lifecycle of the `passalong` project: releases are now tag-driven through the `Release` GitHub workflow, which checks the tag and records with `scripts/check-release-tag.sh`, builds binaries, publishes to crates.io after the `release` environment is approved, and creates the GitHub release from `docs/release/vX.Y.Z.md`; changelog version headings are `vX.Y.Z - <UTC timestamp>`; the Homebrew formula is updated by `scripts/update-homebrew-formula.sh` on a tap branch; `scripts/release.sh` and `just release` are gone
 - `just check` now runs the Markdown link check (`scripts/check-links.sh`) and no longer runs `cargo package`; `just ci` adds the supply-chain audit (`cargo deny` with `deny.toml`), a `publish-dry-run`, and the workflow lint
 - The crate README links are absolute GitHub URLs, because crates.io resolves relative links against the crate's folder
 - The changelog entry for new work is added at branch creation, before the plan, matching `passalong`
+
+### Added
+
+- `--yes` / `-y` and `[safety] assume_yes` to pre-approve ordinary prompts for non-interactive use, and `--i-approve-destructive-commands` to pre-approve the destructive tier as well (command line only, never config)
+- `[safety] read_only_commands` and `[safety] destructive_commands` to extend the built-in classification
+
+### Testing
+
+- The confirmation, selection, and request prompts are behind a `Prompter` trait (`REV-00001-MED-06`), so the approve, decline, and select paths are covered by integration tests through the real application flow
 
 ## [0.3.2] - 2026-09-17
 
