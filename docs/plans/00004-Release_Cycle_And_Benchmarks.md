@@ -33,14 +33,14 @@ confidence: medium                # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: not-started # not-started | in-progress | blocked | completed | abandoned
-builder_agent: null
-builder_model: null
-execution_branch: null
-execution_started_at: null
-execution_updated_at: null
+implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+builder_agent: "Claude Code"
+builder_model: "anthropic/claude-opus-5"
+execution_branch: "feature/00004-release-cycle-and-benchmarks"
+execution_started_at: "2026-09-21T23:01:21Z"
+execution_updated_at: "2026-09-21T23:01:21Z"
 execution_completed_at: null
-current_step: null
+current_step: "PLAN-00004-STEP-01"
 ---
 
 # Delivery Plan 00004: Release Cycle And Benchmarks
@@ -818,7 +818,7 @@ tag `v0.5.0` by hand and dispatch the workflow to recover.
 
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
-| PLAN-00004-STEP-01 | not-started | — | — | — | — |
+| PLAN-00004-STEP-01 | completed | 2026-09-21T23:01:21Z | 2026-09-21T23:01:21Z | Verification results rows 1-2 | Baseline identical to plan section 3 |
 | PLAN-00004-STEP-02 | not-started | — | — | — | — |
 | PLAN-00004-STEP-03 | not-started | — | — | — | — |
 | PLAN-00004-STEP-04 | not-started | — | — | — | — |
@@ -834,6 +834,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
+| 2026-09-21T23:01:21Z | STEP-01 | Execution started on the approved plan; baseline confirmed | Verification results rows 1-2 | STEP-02: capture Ollama timings |
 
 ### Deviations and blockers
 
@@ -844,12 +845,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 
 | Timestamp (UTC) | Step | Command or check | Result | Evidence |
 |---|---|---|---|---|
+| 2026-09-21T23:01:21Z | STEP-01 | `just ci` | pass | Exit 0; 167 tests; lines 4940, missed 404, 91.82%, matching plan section 3 exactly |
+| 2026-09-21T23:01:21Z | STEP-01 | Reference outputs saved outside the repository | recorded | `--help` (29 lines) for AC-20; `cargo package --list` (63 entries) for AC-17 |
 
 ### Completion summary
 
-- **Implementation status:** `not-started`
+- **Implementation status:** `in-progress`
 - **Completed requirements:** None
-- **Incomplete requirements:** All
+- **Incomplete requirements:** REQ-01 to REQ-15
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->
