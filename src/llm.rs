@@ -35,7 +35,7 @@ impl OllamaClient {
         session_context: Option<&str>,
         verbose: bool,
         output: &OutputStyler,
-    ) -> Result<CommandPlan> {
+    ) -> Result<(CommandPlan, Timings)> {
         let request_body = GenerateRequest {
             model: &self.config.model,
             prompt: build_command_prompt(
@@ -53,7 +53,10 @@ impl OllamaClient {
             expects_json: true,
         };
 
-        let generated = self.generate_text(&request_body, verbose, output)?;
+        let Generated {
+            text: generated,
+            timings,
+        } = self.generate_text(&request_body, verbose, output)?;
         let json = extract_json_document(&generated).with_context(|| {
             if verbose {
                 format!(
@@ -83,7 +86,7 @@ impl OllamaClient {
 
         validate_plan(&plan)?;
 
-        Ok(plan)
+        Ok((plan, timings))
     }
 
     pub fn answer_unresolved(
@@ -94,7 +97,7 @@ impl OllamaClient {
         session_context: Option<&str>,
         verbose: bool,
         output: &OutputStyler,
-    ) -> Result<String> {
+    ) -> Result<(String, Timings)> {
         let request_body = GenerateRequest {
             model: &self.config.model,
             prompt: build_text_response_prompt(
@@ -111,14 +114,17 @@ impl OllamaClient {
             expects_json: false,
         };
 
-        let generated = self.generate_text(&request_body, verbose, output)?;
+        let Generated {
+            text: generated,
+            timings,
+        } = self.generate_text(&request_body, verbose, output)?;
         let answer = generated.trim();
 
         if answer.is_empty() {
             bail!("ollama returned an empty text response")
         }
 
-        Ok(answer.to_string())
+        Ok((answer.to_string(), timings))
     }
 
     fn generate_text(
@@ -126,7 +132,7 @@ impl OllamaClient {
         request_body: &GenerateRequest<'_>,
         verbose: bool,
         output: &OutputStyler,
-    ) -> Result<String> {
+    ) -> Result<Generated> {
         if self.config.use_chat_api {
             return self.chat_text(request_body, verbose, output);
         }
@@ -139,7 +145,7 @@ impl OllamaClient {
         request_body: &GenerateRequest<'_>,
         verbose: bool,
         output: &OutputStyler,
-    ) -> Result<String> {
+    ) -> Result<Generated> {
         let url = format!(
             "{}/api/generate",
             self.config.base_url.trim_end_matches('/')
@@ -192,7 +198,10 @@ impl OllamaClient {
             );
         }
 
-        Ok(response.response)
+        Ok(Generated {
+            text: response.response,
+            timings: response.timings,
+        })
     }
 
     fn chat_text(
@@ -200,7 +209,7 @@ impl OllamaClient {
         request_body: &GenerateRequest<'_>,
         verbose: bool,
         output: &OutputStyler,
-    ) -> Result<String> {
+    ) -> Result<Generated> {
         let url = format!("{}/api/chat", self.config.base_url.trim_end_matches('/'));
         let chat_request = ChatRequest {
             model: request_body.model,
@@ -266,7 +275,10 @@ impl OllamaClient {
             );
         }
 
-        Ok(response.message.content)
+        Ok(Generated {
+            text: response.message.content,
+            timings: response.timings,
+        })
     }
 
     pub fn check_service(&self, verbose: bool, output: &OutputStyler) -> Result<OllamaStatus> {
@@ -428,11 +440,75 @@ struct ChatMessageRequest {
 #[derive(Debug, Deserialize)]
 struct GenerateResponse {
     response: String,
+    #[serde(flatten)]
+    timings: Timings,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     message: ChatMessageResponse,
+    #[serde(flatten)]
+    timings: Timings,
+}
+
+/// What Ollama reports about the work it did. Every field is optional: a
+/// server that does not send them leaves the figures blank rather than
+/// failing the request. Durations are nanoseconds.
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
+pub struct Timings {
+    pub eval_count: Option<u64>,
+    #[serde(rename = "eval_duration")]
+    pub eval_duration_ns: Option<u64>,
+    pub prompt_eval_count: Option<u64>,
+    #[serde(rename = "prompt_eval_duration")]
+    pub prompt_eval_duration_ns: Option<u64>,
+    #[serde(rename = "load_duration")]
+    pub load_duration_ns: Option<u64>,
+    #[serde(rename = "total_duration")]
+    pub total_duration_ns: Option<u64>,
+}
+
+impl Timings {
+    /// Generated tokens per second. `None` when the server did not report
+    /// them, or when it reported a zero duration, which would divide by
+    /// zero rather than mean "infinitely fast".
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        let count = self.eval_count?;
+        let nanoseconds = self.eval_duration_ns.filter(|value| *value > 0)?;
+
+        Some(count as f64 * 1_000_000_000.0 / nanoseconds as f64)
+    }
+
+    /// Prompt tokens read per second. Reading a prompt and writing an
+    /// answer are different speeds, so they are reported separately.
+    pub fn prompt_tokens_per_second(&self) -> Option<f64> {
+        let count = self.prompt_eval_count?;
+        let nanoseconds = self.prompt_eval_duration_ns.filter(|value| *value > 0)?;
+
+        Some(count as f64 * 1_000_000_000.0 / nanoseconds as f64)
+    }
+
+    /// How long the model took to load, which measures it arriving rather
+    /// than it thinking, and so is reported on its own.
+    pub fn load_ms(&self) -> Option<u128> {
+        self.duration_ms(self.load_duration_ns)
+    }
+
+    /// The server's own measure of the whole call. Beside cli-bot's
+    /// measured time it shows what the round trip cost.
+    pub fn server_total_ms(&self) -> Option<u128> {
+        self.duration_ms(self.total_duration_ns)
+    }
+
+    fn duration_ms(&self, nanoseconds: Option<u64>) -> Option<u128> {
+        nanoseconds.map(|value| u128::from(value) / 1_000_000)
+    }
+}
+
+/// A generated answer and what the server reported about producing it.
+pub struct Generated {
+    pub text: String,
+    pub timings: Timings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -584,8 +660,9 @@ fn extract_json_document(response: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GenerateRequest, OllamaClient, OllamaStatus, build_command_prompt,
-        build_text_response_prompt, extract_json_document, optional_timeout, validate_plan,
+        ChatResponse, GenerateRequest, GenerateResponse, OllamaClient, OllamaStatus, Timings,
+        build_command_prompt, build_text_response_prompt, extract_json_document, optional_timeout,
+        validate_plan,
     };
     use crate::config::OllamaConfig;
     use crate::environment::{
@@ -605,6 +682,60 @@ mod tests {
             request_timeout_seconds: request,
             connect_timeout_seconds: connect,
         }
+    }
+
+    #[test]
+    fn timings_are_read_from_a_generate_response() {
+        let response = serde_json::from_str::<GenerateResponse>(
+            r#"{"response":"hi","eval_count":10,"eval_duration":255555000,
+                "prompt_eval_count":5,"prompt_eval_duration":86884000,
+                "load_duration":8614861799,"total_duration":8962347492}"#,
+        )
+        .expect("a response with timings should parse");
+        let timings = response.timings;
+
+        assert_eq!(timings.eval_count, Some(10));
+        assert_eq!(timings.load_ms(), Some(8614));
+        assert_eq!(
+            timings
+                .tokens_per_second()
+                .map(|rate| (rate * 10.0).round()),
+            Some(391.0),
+            "10 tokens in 0.2555 s is 39.1 per second"
+        );
+    }
+
+    #[test]
+    fn timings_are_read_from_a_chat_response() {
+        let response = serde_json::from_str::<ChatResponse>(
+            r#"{"message":{"content":"hi"},"eval_count":10,"eval_duration":208732000}"#,
+        )
+        .expect("a chat response with timings should parse");
+
+        assert_eq!(response.timings.eval_count, Some(10));
+        assert!(response.timings.tokens_per_second().is_some());
+        assert_eq!(response.timings.load_ms(), None);
+    }
+
+    #[test]
+    fn a_response_without_timings_still_parses() {
+        let response = serde_json::from_str::<GenerateResponse>(r#"{"response":"hi"}"#)
+            .expect("a response without timings should parse");
+
+        assert_eq!(response.timings.tokens_per_second(), None);
+        assert_eq!(response.timings.load_ms(), None);
+        assert_eq!(response.timings.eval_count, None);
+    }
+
+    #[test]
+    fn a_zero_duration_is_no_rate_rather_than_infinity() {
+        let timings = Timings {
+            eval_count: Some(10),
+            eval_duration_ns: Some(0),
+            ..Timings::default()
+        };
+
+        assert_eq!(timings.tokens_per_second(), None);
     }
 
     #[test]

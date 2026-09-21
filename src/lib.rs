@@ -22,7 +22,7 @@ use crate::config::{AppConfig, ModelsBenchmarkConfig, is_known_editor, resolve_c
 use crate::environment::{PackageManagerSource, resolve_environment};
 pub use crate::error::CliBotError;
 use crate::error::kind_of;
-use crate::llm::{OllamaBenchmarkMetadata, OllamaClient};
+use crate::llm::{OllamaBenchmarkMetadata, OllamaClient, Timings};
 pub use crate::output::{ColorMode, OutputStyler};
 use crate::planner::{CommandPlan, PlannedCommand, recommended_command};
 use crate::prompt::describe_terminal;
@@ -477,7 +477,7 @@ fn run_single_request(
     }
 
     let planning_start = Instant::now();
-    let plan = planner
+    let (plan, plan_timings) = planner
         .plan_commands(
             request,
             &config.safety.destructive_substrings,
@@ -510,7 +510,7 @@ fn run_single_request(
             );
         }
         let response_start = Instant::now();
-        let text_response = planner
+        let (text_response, fallback_timings) = planner
             .answer_unresolved(
                 request,
                 preferred_editor,
@@ -541,6 +541,7 @@ fn run_single_request(
             print_benchmark_report(
                 output,
                 &config.ollama.model,
+                fallback_timings,
                 planning_elapsed,
                 None,
                 total_start.elapsed(),
@@ -623,6 +624,7 @@ fn run_single_request(
             print_benchmark_report(
                 output,
                 &config.ollama.model,
+                plan_timings,
                 planning_elapsed,
                 None,
                 total_start.elapsed(),
@@ -656,6 +658,7 @@ fn run_single_request(
                 print_benchmark_report(
                     output,
                     &config.ollama.model,
+                    plan_timings,
                     planning_elapsed,
                     None,
                     total_start.elapsed(),
@@ -695,6 +698,7 @@ fn run_single_request(
         print_benchmark_report(
             output,
             &config.ollama.model,
+            plan_timings,
             planning_elapsed,
             Some(execution_elapsed),
             total_start.elapsed(),
@@ -1050,7 +1054,7 @@ fn run_models_benchmark(
             let planner_elapsed = planner_start.elapsed();
 
             let entry = match result {
-                Ok(plan) if plan.unresolved => {
+                Ok((plan, plan_timings)) if plan.unresolved => {
                     let fallback_start = Instant::now();
                     let response = client.answer_unresolved(
                         query,
@@ -1063,12 +1067,13 @@ fn run_models_benchmark(
                     let fallback_elapsed = fallback_start.elapsed();
 
                     match response {
-                        Ok(response) => ModelBenchmarkResult {
+                        Ok((response, fallback_timings)) => ModelBenchmarkResult {
                             model: model.clone(),
                             query: query.clone(),
                             planner_ms: duration_to_ms(planner_elapsed),
                             fallback_ms: Some(duration_to_ms(fallback_elapsed)),
                             total_ms: duration_to_ms(planner_elapsed + fallback_elapsed),
+                            timings: fallback_timings,
                             unresolved: true,
                             response_kind: "text_response".to_string(),
                             response: response.trim().to_string(),
@@ -1080,6 +1085,7 @@ fn run_models_benchmark(
                             planner_ms: duration_to_ms(planner_elapsed),
                             fallback_ms: Some(duration_to_ms(fallback_elapsed)),
                             total_ms: duration_to_ms(planner_elapsed + fallback_elapsed),
+                            timings: plan_timings,
                             unresolved: true,
                             response_kind: "error".to_string(),
                             response: String::new(),
@@ -1087,12 +1093,13 @@ fn run_models_benchmark(
                         },
                     }
                 }
-                Ok(plan) => ModelBenchmarkResult {
+                Ok((plan, plan_timings)) => ModelBenchmarkResult {
                     model: model.clone(),
                     query: query.clone(),
                     planner_ms: duration_to_ms(planner_elapsed),
                     fallback_ms: None,
                     total_ms: duration_to_ms(planner_elapsed),
+                    timings: plan_timings,
                     unresolved: false,
                     response_kind: "command_plan".to_string(),
                     response: format_command_plan_response(&plan),
@@ -1103,6 +1110,7 @@ fn run_models_benchmark(
                     query: query.clone(),
                     planner_ms: duration_to_ms(planner_elapsed),
                     fallback_ms: None,
+                    timings: Timings::default(),
                     total_ms: duration_to_ms(planner_elapsed),
                     unresolved: false,
                     response_kind: "error".to_string(),
@@ -1254,6 +1262,18 @@ fn render_models_benchmark_markdown(
                 None => writeln!(report, "- Fallback ms: not used").ok(),
             };
             writeln!(report, "- Total ms: {}", result.total_ms).ok();
+            writeln!(
+                report,
+                "- Tokens/s: {}",
+                format_rate(result.timings.tokens_per_second())
+            )
+            .ok();
+            if let Some(count) = result.timings.eval_count {
+                writeln!(report, "- Generated tokens: {count}").ok();
+            }
+            if let Some(load) = result.timings.load_ms() {
+                writeln!(report, "- Model load ms: {load}").ok();
+            }
             writeln!(report, "- Kind: {}", result.response_kind).ok();
             writeln!(
                 report,
@@ -1328,16 +1348,16 @@ fn render_models_benchmark_model_summary(
     writeln!(report, "## Model Summary\n").ok();
     writeln!(
         report,
-        "| Model | Parameter Size | Success Rate | Avg Total ms (ok) | Successful Queries | Failed Queries |"
+        "| Model | Parameter Size | Success Rate | Avg Tokens/s (ok) | Avg Total ms (ok) | Successful Queries | Failed Queries |"
     )
     .ok();
-    writeln!(report, "| --- | --- | ---: | ---: | ---: | ---: |").ok();
+    writeln!(report, "| --- | --- | ---: | ---: | ---: | ---: | ---: |").ok();
 
     for model in &benchmark_config.models {
         let stats = compute_model_benchmark_stats(model, results);
         writeln!(
             report,
-            "| {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} |",
             escape_markdown_cell(model),
             ollama_metadata
                 .model_parameter_sizes
@@ -1345,6 +1365,7 @@ fn render_models_benchmark_model_summary(
                 .map(String::as_str)
                 .unwrap_or("unknown"),
             format_success_rate(stats.success_count, stats.total_count),
+            format_rate(stats.avg_tokens_per_second),
             stats
                 .avg_total_ms_ok
                 .map(|value| value.to_string())
@@ -1367,15 +1388,20 @@ fn render_models_benchmark_ranking(
     writeln!(report, "## Ranking\n").ok();
     writeln!(
         report,
-        "Ranked by success rate first, then by average total milliseconds across successful queries.\n"
+        "Ranked by success rate first, then by generated tokens per second, then by average total milliseconds across successful queries. Tokens per second is fair between a short answer and a long one; total milliseconds is dominated by how long the model took to load.\n"
     )
     .ok();
     writeln!(
         report,
-        "| Rank | Model | Parameter Size | Success Rate | Avg Total ms (ok) |"
+        "> This measures speed and whether an answer came back at all. It does **not** measure whether the command was correct.\n"
     )
     .ok();
-    writeln!(report, "| ---: | --- | --- | ---: | ---: |").ok();
+    writeln!(
+        report,
+        "| Rank | Model | Parameter Size | Success Rate | Avg Tokens/s (ok) | Avg Total ms (ok) |"
+    )
+    .ok();
+    writeln!(report, "| ---: | --- | --- | ---: | ---: | ---: |").ok();
 
     let mut ranked = benchmark_config
         .models
@@ -1388,6 +1414,20 @@ fn render_models_benchmark_ranking(
             .success_count
             .cmp(&left_stats.success_count)
             .then_with(|| left_stats.failure_count.cmp(&right_stats.failure_count))
+            .then_with(|| {
+                // Faster first, and a model that reported no rate sorts last.
+                match (
+                    left_stats.avg_tokens_per_second,
+                    right_stats.avg_tokens_per_second,
+                ) {
+                    (Some(left), Some(right)) => right
+                        .partial_cmp(&left)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            })
             .then_with(
                 || match (left_stats.avg_total_ms_ok, right_stats.avg_total_ms_ok) {
                     (Some(left), Some(right)) => left.cmp(&right),
@@ -1402,7 +1442,7 @@ fn render_models_benchmark_ranking(
     for (index, (model, stats)) in ranked.iter().enumerate() {
         writeln!(
             report,
-            "| {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} |",
             index + 1,
             escape_markdown_cell(model),
             ollama_metadata
@@ -1411,6 +1451,7 @@ fn render_models_benchmark_ranking(
                 .map(String::as_str)
                 .unwrap_or("unknown"),
             format_success_rate(stats.success_count, stats.total_count),
+            format_rate(stats.avg_tokens_per_second),
             stats
                 .avg_total_ms_ok
                 .map(|value| value.to_string())
@@ -1424,6 +1465,12 @@ fn render_models_benchmark_ranking(
 
 fn benchmark_output_is_stdout(path: &std::path::Path) -> bool {
     path.as_os_str() == "-"
+}
+
+/// A rate to one decimal, or `n/a` when the server did not report one.
+fn format_rate(rate: Option<f64>) -> String {
+    rate.map(|value| format!("{value:.1}"))
+        .unwrap_or_else(|| "n/a".to_string())
 }
 
 fn format_success_rate(success_count: usize, total_count: usize) -> String {
@@ -1461,12 +1508,20 @@ fn compute_model_benchmark_stats(
     } else {
         Some(successful_total_ms.iter().sum::<u128>() / successful_total_ms.len() as u128)
     };
+    let rates = model_results
+        .iter()
+        .filter(|result| result.error.is_none())
+        .filter_map(|result| result.timings.tokens_per_second())
+        .collect::<Vec<_>>();
+    let avg_tokens_per_second =
+        (!rates.is_empty()).then(|| rates.iter().sum::<f64>() / rates.len() as f64);
 
     ModelBenchmarkStats {
         total_count,
         success_count,
         failure_count,
         avg_total_ms_ok,
+        avg_tokens_per_second,
     }
 }
 
@@ -1480,6 +1535,7 @@ struct ModelBenchmarkResult {
     planner_ms: u128,
     fallback_ms: Option<u128>,
     total_ms: u128,
+    timings: Timings,
     unresolved: bool,
     response_kind: String,
     response: String,
@@ -1491,6 +1547,7 @@ struct ModelBenchmarkStats {
     success_count: usize,
     failure_count: usize,
     avg_total_ms_ok: Option<u128>,
+    avg_tokens_per_second: Option<f64>,
 }
 
 struct BenchmarkHostInfo {
@@ -1620,17 +1677,36 @@ fn detect_linux_gpu_vram() -> Option<String> {
         return Some(format_bytes_from_mib(first_value));
     }
 
+    // On an APU `mem_info_vram_total` is the small fixed carve-out, not the
+    // memory the model can use, so the shared total is reported beside it.
     let paths = std::fs::read_dir("/sys/class/drm").ok()?;
     for entry in paths.flatten() {
-        let vram_path = entry.path().join("device/mem_info_vram_total");
-        if let Ok(content) = std::fs::read_to_string(vram_path)
-            && let Ok(bytes) = content.trim().parse::<u64>()
-        {
-            return Some(format_bytes(bytes));
-        }
+        let device = entry.path().join("device");
+        let Some(dedicated) = read_memory_total(&device.join("mem_info_vram_total")) else {
+            continue;
+        };
+
+        return Some(
+            match read_memory_total(&device.join("mem_info_gtt_total")) {
+                Some(shared) => format!(
+                    "{} dedicated, {} shared",
+                    format_bytes(dedicated),
+                    format_bytes(shared)
+                ),
+                None => format!("{} dedicated", format_bytes(dedicated)),
+            },
+        );
     }
 
     None
+}
+
+fn read_memory_total(path: &std::path::Path) -> Option<u64> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
 }
 
 fn parse_mem_total_kib(line: &str) -> Option<u64> {
@@ -1782,6 +1858,7 @@ fn select_command<'a>(
 fn print_benchmark_report(
     output: &OutputStyler,
     model: &str,
+    timings: Timings,
     planning: Duration,
     execution: Option<Duration>,
     total: Duration,
@@ -1804,6 +1881,27 @@ fn print_benchmark_report(
     }
 
     println!("{} {}", output.key("total_ms:"), duration_to_ms(total));
+
+    // Only what the server actually reported: a figure it did not send is
+    // left out rather than shown as zero.
+    if let Some(rate) = timings.tokens_per_second() {
+        println!("{} {rate:.1}", output.key("tokens_per_second:"));
+    }
+    if let Some(count) = timings.eval_count {
+        println!("{} {count}", output.key("generated_tokens:"));
+    }
+    if let Some(count) = timings.prompt_eval_count {
+        println!("{} {count}", output.key("prompt_tokens:"));
+    }
+    if let Some(rate) = timings.prompt_tokens_per_second() {
+        println!("{} {rate:.1}", output.key("prompt_tokens_per_second:"));
+    }
+    if let Some(load) = timings.load_ms() {
+        println!("{} {load}", output.key("model_load_ms:"));
+    }
+    if let Some(server_total) = timings.server_total_ms() {
+        println!("{} {server_total}", output.key("server_total_ms:"));
+    }
 }
 
 fn duration_to_ms(duration: Duration) -> u128 {
@@ -1822,11 +1920,11 @@ mod tests {
         BenchmarkHostInfo, Cli, ModelBenchmarkResult, apply_model_override,
         benchmark_output_is_stdout, collect_benchmark_host_info, command_output,
         compute_model_benchmark_stats, duration_to_ms, escape_markdown_cell, exit_code,
-        format_bytes_from_kib, format_bytes_from_mib, format_command_plan_response,
+        format_bytes_from_kib, format_bytes_from_mib, format_command_plan_response, format_rate,
         format_success_rate, handle_interactive_request_error, handle_session_command,
         interactive_entry_hint, normalize_request, parse_mem_total_kib, print_benchmark_report,
-        render_models_benchmark_markdown, resolve_request, run_models_benchmark, select_command,
-        should_quit_interactive,
+        render_models_benchmark_markdown, render_models_benchmark_ranking, resolve_request,
+        run_models_benchmark, select_command, should_quit_interactive,
     };
     use crate::config::{
         AppConfig, EnvironmentConfig, ExecutionConfig, ModelsBenchmarkConfig, OllamaConfig,
@@ -1834,7 +1932,7 @@ mod tests {
     };
     use crate::environment::{OperatingSystem, ResolvedEnvironment};
     use crate::error::CliBotError;
-    use crate::llm::OllamaBenchmarkMetadata;
+    use crate::llm::{OllamaBenchmarkMetadata, Timings};
     use crate::output::{ColorMode, OutputStyler};
     use crate::planner::{CommandPlan, PlannedCommand};
     use crate::prompt::DialoguerPrompter;
@@ -2149,6 +2247,7 @@ mod tests {
                 planner_ms: 10,
                 fallback_ms: None,
                 total_ms: 10,
+                timings: Timings::default(),
                 unresolved: false,
                 response_kind: "command_plan".into(),
                 response: "ping -c 5 google.com".into(),
@@ -2160,6 +2259,7 @@ mod tests {
                 planner_ms: 20,
                 fallback_ms: None,
                 total_ms: 20,
+                timings: Timings::default(),
                 unresolved: false,
                 response_kind: "error".into(),
                 response: String::new(),
@@ -2171,6 +2271,7 @@ mod tests {
                 planner_ms: 11,
                 fallback_ms: Some(4),
                 total_ms: 15,
+                timings: Timings::default(),
                 unresolved: true,
                 response_kind: "text_response".into(),
                 response: "maintenance".into(),
@@ -2307,16 +2408,95 @@ mod tests {
     }
 
     #[test]
+    fn the_ranking_prefers_the_faster_model_when_both_succeed() {
+        // Same success rate; the only difference is the rate.
+        let results = vec![
+            ModelBenchmarkResult {
+                model: "slow:latest".into(),
+                query: "q".into(),
+                planner_ms: 10,
+                fallback_ms: None,
+                total_ms: 10,
+                timings: Timings {
+                    eval_count: Some(10),
+                    eval_duration_ns: Some(1_000_000_000),
+                    ..Timings::default()
+                },
+                unresolved: false,
+                response_kind: "command_plan".into(),
+                response: "ls".into(),
+                error: None,
+            },
+            ModelBenchmarkResult {
+                model: "fast:latest".into(),
+                query: "q".into(),
+                planner_ms: 10,
+                fallback_ms: None,
+                total_ms: 10,
+                timings: Timings {
+                    eval_count: Some(100),
+                    eval_duration_ns: Some(1_000_000_000),
+                    ..Timings::default()
+                },
+                unresolved: false,
+                response_kind: "command_plan".into(),
+                response: "ls".into(),
+                error: None,
+            },
+        ];
+        let config = ModelsBenchmarkConfig {
+            models: vec!["slow:latest".into(), "fast:latest".into()],
+            queries: vec!["q".into()],
+        };
+        let metadata = OllamaBenchmarkMetadata {
+            version: None,
+            model_parameter_sizes: BTreeMap::new(),
+        };
+
+        let mut report = String::new();
+        render_models_benchmark_ranking(&mut report, &metadata, &config, &results);
+
+        let fast = report.find("fast:latest").expect("fast should be ranked");
+        let slow = report.find("slow:latest").expect("slow should be ranked");
+        assert!(fast < slow, "100 tokens/s outranks 10:\n{report}");
+        assert!(report.contains("| 100.0 |"), "the rate is shown:\n{report}");
+        assert!(
+            report.contains("does **not** measure whether the command was correct"),
+            "the caveat is stated:\n{report}"
+        );
+    }
+
+    #[test]
+    fn a_model_that_reports_no_rate_shows_it_as_unavailable() {
+        assert_eq!(format_rate(None), "n/a");
+        assert_eq!(format_rate(Some(39.14)), "39.1");
+    }
+
+    #[test]
     fn print_benchmark_report_executes_without_error() {
         let output = OutputStyler::new(ColorMode::Never);
 
-        print_benchmark_report(
-            &output,
-            "lfm2:latest",
-            Duration::from_millis(12),
-            Some(Duration::from_millis(3)),
-            Duration::from_millis(15),
-        );
+        // With timings, and without: a server that reports nothing must not
+        // make the report fail or invent zeroes.
+        for timings in [
+            Timings {
+                eval_count: Some(10),
+                eval_duration_ns: Some(255_555_000),
+                prompt_eval_count: Some(5),
+                load_duration_ns: Some(8_614_861_799),
+                ..Timings::default()
+            },
+            Timings::default(),
+        ] {
+            print_benchmark_report(
+                &output,
+                "lfm2:latest",
+                timings,
+                Duration::from_millis(12),
+                Some(Duration::from_millis(3)),
+                Duration::from_millis(15),
+            );
+        }
     }
 
     fn sample_config() -> AppConfig {
@@ -2434,6 +2614,7 @@ mod tests {
                 planner_ms: 10,
                 fallback_ms: None,
                 total_ms: 10,
+                timings: Timings::default(),
                 unresolved: false,
                 response_kind: "command_plan".into(),
                 response: "ping -c 5 google.com".into(),
@@ -2445,6 +2626,7 @@ mod tests {
                 planner_ms: 10,
                 fallback_ms: Some(5),
                 total_ms: 15,
+                timings: Timings::default(),
                 unresolved: true,
                 response_kind: "text_response".into(),
                 response: "42".into(),
@@ -2456,6 +2638,7 @@ mod tests {
                 planner_ms: 30,
                 fallback_ms: None,
                 total_ms: 30,
+                timings: Timings::default(),
                 unresolved: false,
                 response_kind: "error".into(),
                 response: String::new(),

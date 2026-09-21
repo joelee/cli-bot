@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00004-release-cycle-and-benchmarks"
 execution_started_at: "2026-09-21T23:01:21Z"
-execution_updated_at: "2026-09-21T23:01:21Z"
+execution_updated_at: "2026-09-21T23:06:38Z"
 execution_completed_at: null
-current_step: "PLAN-00004-STEP-01"
+current_step: "PLAN-00004-STEP-03"
 ---
 
 # Delivery Plan 00004: Release Cycle And Benchmarks
@@ -819,8 +819,8 @@ tag `v0.5.0` by hand and dispatch the workflow to recover.
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
 | PLAN-00004-STEP-01 | completed | 2026-09-21T23:01:21Z | 2026-09-21T23:01:21Z | Verification results rows 1-2 | Baseline identical to plan section 3 |
-| PLAN-00004-STEP-02 | not-started | — | — | — | — |
-| PLAN-00004-STEP-03 | not-started | — | — | — | — |
+| PLAN-00004-STEP-02 | completed | 2026-09-21T23:06:38Z | 2026-09-21T23:06:38Z | Verification results rows 3-4 | Committed together with STEP-03; see Deviations |
+| PLAN-00004-STEP-03 | completed | 2026-09-21T23:06:38Z | 2026-09-21T23:06:38Z | Verification results row 4 | Ranking key added; the correctness caveat is in the report |
 | PLAN-00004-STEP-04 | not-started | — | — | — | — |
 | PLAN-00004-STEP-05 | not-started | — | — | — | — |
 | PLAN-00004-STEP-06 | not-started | — | — | — | — |
@@ -835,11 +835,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
 | 2026-09-21T23:01:21Z | STEP-01 | Execution started on the approved plan; baseline confirmed | Verification results rows 1-2 | STEP-02: capture Ollama timings |
+| 2026-09-21T23:06:38Z | STEP-03 | Added `Timings` with `tokens_per_second`, `prompt_tokens_per_second`, `load_ms` and `server_total_ms`, flattened into both response types; `plan_commands` and `answer_unresolved` return them. `--benchmark` prints each figure only when the server sent it; the models benchmark gained a tokens-per-second column in its model summary, ranking and detailed results, ranks on it, and states that it does not measure correctness. GPU memory now reports dedicated VRAM and, on an APU, the shared total (REQ-13) | src/llm.rs, src/lib.rs, tests/mock_ollama.rs | STEP-04: release on merge |
 
 ### Deviations and blockers
 
 | Timestamp (UTC) | Step | Deviation or blocker | Impact | Decision required from |
 |---|---|---|---|---|
+| 2026-09-21T23:06:38Z | STEP-03 | STEP-02 and STEP-03 landed in one commit. `just lint` denies dead code, so a type nothing reads cannot be committed a step before the code that reads it. This is the third plan where a step boundary of the form "add it, then use it" has had to be merged; `AGENTS.md` would be more honest if it said so | None on scope; both steps' tasks and verifications were carried out in full, in order | User, at hand-off: whether to record the constraint in `AGENTS.md` |
+| 2026-09-21T23:06:38Z | STEP-03 | REQ-02 lists four figures for `--benchmark`. `prompt_eval_duration` and `total_duration`, which REQ-01 requires capturing, would then be dead fields, so two more figures are reported: `prompt_tokens_per_second` and `server_total_ms`. Both are useful: prompt reading and answer writing are different speeds, and the server total beside cli-bot's own shows the round trip | REQ-02 is exceeded, not missed; AC-02 still holds for its four figures | User, at hand-off |
 
 ### Verification results
 
@@ -847,12 +850,14 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 |---|---|---|---|---|
 | 2026-09-21T23:01:21Z | STEP-01 | `just ci` | pass | Exit 0; 167 tests; lines 4940, missed 404, 91.82%, matching plan section 3 exactly |
 | 2026-09-21T23:01:21Z | STEP-01 | Reference outputs saved outside the repository | recorded | `--help` (29 lines) for AC-20; `cargo package --list` (63 entries) for AC-17 |
+| 2026-09-21T23:06:38Z | STEP-02 | Test first: the four `Timings` tests before the fields existed | fail as expected | Compilation failed on `super::Timings` and on `GenerateResponse.timings` |
+| 2026-09-21T23:06:38Z | STEP-03 | `just check` | pass | Exit 0; 175 tests (129 unit, 46 integration); `src/llm.rs` 95.99%, `src/lib.rs` 92.67%; total 92.06%, up from 91.82% |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** None
-- **Incomplete requirements:** REQ-01 to REQ-15
+- **Completed requirements:** PLAN-00004-REQ-01, REQ-02, REQ-03, REQ-13
+- **Incomplete requirements:** REQ-04 to REQ-12, REQ-14, REQ-15
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

@@ -398,6 +398,33 @@ fn plan_with_commands(commands: &[&str]) -> MockResponse {
     )
 }
 
+/// A planner reply carrying the timings Ollama reports alongside it.
+fn plan_for_with_timings(command: &str) -> MockResponse {
+    let plan = serde_json::json!({
+        "summary": "x",
+        "unresolved": false,
+        "commands": [{
+            "command": command,
+            "description": "d",
+            "potentially_destructive": false,
+            "recommended": true,
+        }],
+    })
+    .to_string();
+    MockResponse::json(
+        &serde_json::json!({
+            "response": plan,
+            "eval_count": 10,
+            "eval_duration": 255_555_000_u64,
+            "prompt_eval_count": 5,
+            "prompt_eval_duration": 86_884_000_u64,
+            "load_duration": 8_614_861_799_u64,
+            "total_duration": 8_962_347_492_u64,
+        })
+        .to_string(),
+    )
+}
+
 /// A planner reply whose single command is `command`, never flagged by the
 /// model, so only cli-bot's own classification decides what happens.
 fn plan_for(command: &str) -> MockResponse {
@@ -542,6 +569,26 @@ fn a_planner_error_outside_interactive_mode_is_still_fatal() {
     .expect_err("a single request has nowhere to recover to");
 
     assert!(format!("{error:#}").contains("did not contain a JSON object"));
+}
+
+#[test]
+fn benchmark_reports_the_rate_only_when_the_server_supplies_it() {
+    for (reply, expected) in [
+        (plan_for_with_timings("ls -la"), true),
+        (plan_for("ls -la"), false),
+    ] {
+        let server = MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![reply]);
+        let config_path = ConfigOptions::default().write(server.base_url());
+        let mut cli = sample_cli(config_path, vec!["list files"]);
+        cli.quiet = false;
+        cli.benchmark = true;
+
+        // The report goes to stdout; that it runs and that the figures are
+        // derived is covered by the unit tests. Here we only prove the flow
+        // survives both shapes of reply.
+        run_with_prompter(cli, &ScriptedPrompter::silent())
+            .unwrap_or_else(|error| panic!("timings present={expected}: {error:#}"));
+    }
 }
 
 #[test]
@@ -1324,7 +1371,12 @@ fn models_benchmark_writes_markdown_report_with_failures_and_fallbacks() {
     assert!(report.contains("| bad:latest | unknown |"));
     assert!(report.contains("meaning \\| of life"));
     assert!(report.contains("| 1 | good:latest | 1.2B | 100.0% |"));
-    assert!(report.contains("| 2 | bad:latest | unknown | 0.0% | failed |"));
+    // The ranking gained a tokens-per-second column; a model that reported
+    // no rate shows `n/a` there.
+    assert!(
+        report.contains("| 2 | bad:latest | unknown | 0.0% | n/a | failed |"),
+        "{report}"
+    );
     assert!(report.contains("printf ok [recommended]"));
     assert!(report.contains("forty-two"));
     assert!(report.contains("did not contain a JSON object"));
