@@ -1,32 +1,69 @@
 name: Release
 
-# Runs when a version tag such as v0.3.3 is pushed. It checks the tag and
-# the release records and builds binaries. Once a maintainer approves the
-# `release` environment, it publishes the crate to crates.io, which cannot
-# be undone, only yanked, and only once that succeeds creates the GitHub
-# release from docs/release/<tag>.md with the binaries attached.
+# Runs on every push to main, and releases on almost none of them:
+# scripts/release-gate.sh releases only when the crate version has no tag
+# yet and its records are final, so an ordinary merge does nothing and says
+# so. When it does release, this workflow creates the tag itself, builds the
+# binaries, and then waits: the `release` environment holds the crates.io
+# token and a required reviewer, so nothing is published until a maintainer
+# approves. Publishing cannot be undone, only yanked. The GitHub release is
+# created from docs/release/<tag>.md, with its binaries attached in the same
+# call, because a release is immutable once it exists.
+#
+# A tag pushed with GITHUB_TOKEN does not start another workflow run, which
+# is why the tag is created here rather than by a separate job that would
+# then trigger nothing.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  gate:
+    name: Decide whether to release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.gate.outputs.release }}
+      tag: ${{ steps.gate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - id: gate
+        run: scripts/release-gate.sh
+      - name: Create the tag
+        if: steps.gate.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+
   verify:
     name: Check the tag and the package
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - run: scripts/check-release-tag.sh "$GITHUB_REF_NAME"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: scripts/check-release-tag.sh "$TAG"
+        env:
+          TAG: ${{ needs.gate.outputs.tag }}
       # Keep the version in step with rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: 1.98.1
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # A restored cache may hold a same-version build of the crate, which
       # cargo would reuse when verifying the package.
       - run: cargo clean -p cli-bot
@@ -39,7 +76,7 @@ jobs:
 
   binaries:
     name: Build ${{ matrix.target }}
-    needs: verify
+    needs: [gate, verify]
     strategy:
       matrix:
         include:
@@ -53,14 +90,16 @@ jobs:
           # entry with REV-00001-MED-08; the packaging step below is kept
           # ready for it.
     runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Keep the version in step with rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: 1.98.1
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # bash on every runner: PowerShell, the default shell on Windows,
       # does not expand `$TARGET`, and cargo then gets an empty target.
       - run: cargo build --release --locked --target "$TARGET"
@@ -73,7 +112,7 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: |
-          name="cli-bot-${GITHUB_REF_NAME#v}-$TARGET"
+          name="cli-bot-${TAG#v}-$TARGET"
           mkdir "$name"
           cp "target/$TARGET/release/cli-bot" LICENSE README.md "$name/"
           tar -czf "$name.tar.gz" "$name"
@@ -86,13 +125,13 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: |
-          $name = "cli-bot-$($env:GITHUB_REF_NAME.TrimStart('v'))-$env:TARGET"
+          $name = "cli-bot-$($env:TAG.TrimStart('v'))-$env:TARGET"
           New-Item -ItemType Directory -Path $name | Out-Null
           Copy-Item "target/$env:TARGET/release/cli-bot.exe", LICENSE, README.md -Destination $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLowerInvariant()
           [System.IO.File]::WriteAllText("$PWD/$name.zip.sha256", "$hash  $name.zip`n")
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.target }}
           path: |
@@ -101,35 +140,36 @@ jobs:
 
   crates:
     name: Publish to crates.io
-    needs: binaries
+    needs: [gate, binaries]
     runs-on: ubuntu-latest
-    # The `release` environment holds the crates.io token and accepts only
-    # v* tags; its required reviewer must approve before anything is
-    # published.
+    # The `release` environment holds the crates.io token and a required
+    # reviewer, who must approve before anything is published. It has no
+    # deployment branch policy: the gate job, not the environment, is what
+    # decides that this commit should be released.
     environment: release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Keep the version in step with rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: 1.98.1
-      - uses: Swatinem/rust-cache@v2
+      # Deliberately no build cache: this job holds the crates.io token, so
+      # it restores nothing it did not build itself.
       - run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      # Swatinem/rust-cache's post step fails with ENOENT on the tests/
-      # folder of the crate cargo unpacks into target/package, which is not
-      # worth caching anyway, so remove it first, even after a failure.
-      - if: always()
-        run: rm -rf target/package
 
   release:
     name: Create the GitHub release and attach binaries
-    needs: crates
+    needs: [gate, crates]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist
           merge-multiple: true
@@ -142,16 +182,16 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "error: release $GITHUB_REF_NAME already exists; it cannot be" >&2
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "error: release $TAG already exists; it cannot be" >&2
             echo "amended, so delete it before re-running this job." >&2
             exit 1
           fi
-          notes="docs/release/$GITHUB_REF_NAME.md"
-          args=(--verify-tag --title "cli-bot $GITHUB_REF_NAME")
+          notes="docs/release/$TAG.md"
+          args=(--verify-tag --title "cli-bot $TAG")
           if [ -f "$notes" ]; then
             args+=(--notes-file "$notes")
           else
             args+=(--generate-notes)
           fi
-          gh release create "$GITHUB_REF_NAME" "${args[@]}" dist/*
+          gh release create "$TAG" "${args[@]}" dist/*
