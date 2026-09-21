@@ -6,6 +6,17 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+
+- Tokens per second, generated and prompt token counts, and model load time in `--benchmark` and in the models benchmark report, taken from Ollama's own timings (PLAN-00004)
+
+### Changed
+
+- Releases run from the merge to `main`: the workflow checks the release records, creates the tag itself, builds, publishes, and opens the Homebrew formula pull request. The separate release commit, the manual tag, and the second pull request are gone (PLAN-00004)
+- `--check` accepts a model name without a tag, comparing it against `<name>:latest` (`REV-00001-LOW-04`)
+- The default configuration written on first run no longer carries the maintainer's own editor or an eight-model benchmark list (`REV-00001-LOW-03`)
+- Benchmark reports live under `docs/benchmarks/` (`REV-00001-LOW-06`)
+
 ## v0.4.1 - 2026-09-21T19:29:37Z
 
 ### Added
