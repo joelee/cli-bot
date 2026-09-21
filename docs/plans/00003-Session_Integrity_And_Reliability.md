@@ -33,13 +33,13 @@ confidence: high                  # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+implementation_status: completed # not-started | in-progress | blocked | completed | abandoned
 builder_agent: "Claude Code"
 builder_model: "anthropic/claude-opus-5"
 execution_branch: "feature/00003-session-integrity-and-reliability"
 execution_started_at: "2026-09-20T23:18:41Z"
-execution_updated_at: "2026-09-21T13:17:39Z"
-execution_completed_at: null
+execution_updated_at: "2026-09-21T13:19:53Z"
+execution_completed_at: "2026-09-21T13:19:53Z"
 current_step: "PLAN-00003-STEP-06"
 ---
 
@@ -725,7 +725,7 @@ because its publish dry run needs a clean tree.
 | PLAN-00003-STEP-04 | completed | 2026-09-20T23:45:28Z | 2026-09-20T23:45:28Z | Verification results rows 10-11 | Message-text decisions gone from production code; see Deviations for AC-07 |
 | PLAN-00003-STEP-05 | completed | 2026-09-20T23:47:45Z | 2026-09-20T23:47:45Z | Verification results rows 12-13 | `src/main.rs` stays at 0%: two lines, both exercised only by the real process |
 | PLAN-00003-STEP-06 | completed | 2026-09-21T13:17:39Z | 2026-09-21T13:17:39Z | Verification results rows 14-15 | No flakiness in three runs; the documented fallback was not needed |
-| PLAN-00003-STEP-07 | not-started | — | — | — | — |
+| PLAN-00003-STEP-07 | completed | 2026-09-21T13:19:53Z | 2026-09-21T13:19:53Z | Verification results rows 16-20 | Local work complete |
 
 Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 `skipped`. A skipped step requires explicit user approval recorded in Evidence.
@@ -741,6 +741,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:45:28Z | STEP-04 | Added `src/error.rs` with `CliBotError` and `kind_of`; the planner path attaches `Planner`, `shell::execute` returns `CommandFailed` with the status, and an ended prompt returns `Cancelled`. `interactive_prompt_cancelled` and the text match in `handle_interactive_request_error` are gone, with their tests replaced by typed ones. Interactive mode now returns the prompt after a planner error, and an exhausted script in the test harness means end of input | src/error.rs, src/lib.rs, src/prompt.rs, src/shell.rs, tests/mock_ollama.rs | STEP-05: exit status and the failed turn |
 | 2026-09-20T23:47:45Z | STEP-05 | `shell::execute` now reports a non-zero exit in its result rather than as an error, the turn is saved with `executed: true` and the status, and the failure is returned afterwards. `exit_code` in `src/lib.rs` maps a command failure to its own status; `src/main.rs` calls it | src/shell.rs, src/lib.rs, src/main.rs, tests/mock_ollama.rs | STEP-06: streamed capture |
 | 2026-09-21T13:17:39Z | STEP-06 | `shell::execute` now spawns the child with inherited standard input in every mode and, when capturing, pipes output through one reader thread per stream that writes it on as it arrives and keeps the first bytes; both are joined before the status is read. A command whose program drives the terminal itself, the configured editor or one of the built-in list, runs with no capture. `safety::program_names` supplies the programs, so there is no second parser | src/shell.rs, src/safety.rs | STEP-07: documentation, version, release draft |
+| 2026-09-21T13:19:53Z | STEP-07 | Updated `docs/configuration.md`, `docs/session-memory.md`, `docs/architecture.md`, `docs/testing.md`, and `README.md`; removed the seven closed findings from `docs/backlog.md` and noted that regenerating the benchmark report is now worthwhile; bumped to 0.4.1 and wrote the `docs/release/v0.4.1.md` draft. Plan completed | Verification results rows 16-20 | User pushes and opens the pull request into `main` |
 
 ### Deviations and blockers
 
@@ -771,14 +772,19 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | 2026-09-20T23:47:45Z | STEP-05 | `just check`; the built binary on a command exiting 42 | pass | Exit 0; 160 tests; `src/shell.rs` 97.25%; total 91.65%. The binary printed `Error: command exited with status 42` and exited 42 |
 | 2026-09-21T13:17:39Z | STEP-06 | Test first: the capture, skip-list, limit, tee, and stdin tests before the rewrite | fail as expected | Compilation failed on `needs_terminal`, `capture_limit`, and `tee` |
 | 2026-09-21T13:17:39Z | STEP-06 | `just check`; the whole suite three times | pass | Exit 0; 167 tests; `src/shell.rs` 98.07%; total 91.82%; identical on all three runs |
+| 2026-09-21T13:19:53Z | STEP-07 | Test first: `git grep -n '30-second\\|30 seconds\\|fs::write' -- '*.md'` | recorded | Hits only in the changelog, the backlog, the plans, and an unrelated `just check` timing note in the developer guide |
+| 2026-09-21T13:19:53Z | STEP-07 | `just ci` on the committed tree; `just links`; `--help` against the STEP-01 reference | pass | Exit 0; 167 tests; lines 4940, missed 404, 91.82% (baseline 90.62%); links ok in 26 files; `--help` byte-identical, since this plan adds no flags |
+| 2026-09-21T13:19:53Z | STEP-07 | `scripts/check-release-tag.sh v0.4.1` | fails on exactly the two expected records | The draft line and the `## v0.4.1 - <UTC timestamp>` heading, both written by the release commit |
+| 2026-09-21T13:19:53Z | STEP-07 | Acceptance criteria AC-01 to AC-06, AC-08 to AC-17 | pass | Each checked with the command named in the criterion; `src/session.rs` 90.95%, `src/shell.rs` 98.07%, `src/error.rs` 100% |
+| 2026-09-21T13:19:53Z | STEP-07 | AC-07 | partially met | No production code matches message text; eight test assertions still check wording. See Deviations |
 
 ### Completion summary
 
-- **Implementation status:** `in-progress`
-- **Completed requirements:** PLAN-00003-REQ-01 to REQ-09
-- **Incomplete requirements:** REQ-10, REQ-11
-- **Outstanding blockers:** None
-- **Review request:** Not ready
+- **Implementation status:** `completed`
+- **Completed requirements:** PLAN-00003-REQ-01 to REQ-11
+- **Incomplete requirements:** None
+- **Outstanding blockers:** None. Left with the user: push the branch, open the pull request into `main`, then the v0.4.1 release commit
+- **Review request:** Ready. Coverage 91.82% lines (was 90.62%); 167 tests
 <!-- BUILDER_WORK_LOG_END -->
 
 ## 18. Planning change log
