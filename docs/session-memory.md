@@ -146,6 +146,13 @@ Current on-disk format:
 
 - one JSON file per session
 - human-inspectable and easy to prune
+- written through a temporary file and a rename, so an interrupted write cannot leave a half-written session behind
+- created owner-only on Unix: the folder `0700`, each file `0600`. A file left wider by an earlier version is narrowed when it is next written
+- named with a fixed hash of the working directory. Versions up to v0.4.0 used the standard library's `DefaultHasher`, whose output may change between Rust releases; a file under the old name is found once and renamed
+
+A file the store cannot read or parse is skipped and reported under
+`--verbose`, never deleted and never a reason for another command to fail:
+it may be the very file the user is trying to clear.
 
 Example path shape:
 
@@ -218,6 +225,7 @@ Required rules:
 - If the session context does not clearly resolve the reference, the planner should return `unresolved = true`.
 - Stored session data should stay local on disk.
 - Output capture should remain disabled by default.
+- Capturing output must not take the terminal away from the command. Standard input is always the terminal's, captured output is still written out as it arrives, and a command that draws on the terminal itself, the configured editor or a pager such as `less`, runs without capture.
 
 Examples:
 
@@ -236,9 +244,14 @@ Current defaults:
 - no command output storage in prompts by default
 - easy session deletion with `--session-clear`
 
-Possible later addition:
+Retention:
 
-- `retention_days` for pruning old session files
+- `retention_days` prunes session files that have not been written for that
+  long. Age comes from the file's modification time, which is what "not
+  updated in N days" means and which no unreadable file can prevent reading.
+  Copying or restoring the sessions folder resets that clock.
+- Pruning runs only when the invocation uses session memory, so `--check`
+  and `--no-session` do not touch the folder at all.
 
 ## Testing Plan
 

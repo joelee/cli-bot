@@ -27,6 +27,7 @@
 - `src/planner.rs`: planner response model and command plan parsing.
 - `src/safety.rs`: command parsing and the read-only, state-changing, and destructive classification.
 - `src/prompt.rs`: the `Prompter` trait, its `dialoguer` implementation, and the terminal-capability check.
+- `src/error.rs`: the error kinds the request flow tells apart, so nothing decides behaviour by matching a message.
 - `src/session.rs`: local session storage, scoping, naming, and prompt context rendering.
 - `src/shell.rs`: command execution wrapper.
 
@@ -37,8 +38,11 @@
 - A second LLM pass produces a plain text response only when the command planner returns `unresolved = true`.
 - Session memory is enabled by default, but can be disabled in config or per invocation with `--no-session`.
 - The default session scope is `working_directory`, which keeps the same session name isolated per folder to avoid cross-project leakage.
-- Session state is stored locally as JSON and only a bounded structured summary is added to prompts.
-- Session startup can prune expired session files when `session_memory.retention_days` is configured.
+- Session state is stored locally as JSON, written atomically and owner-only, and only a bounded structured summary is added to prompts.
+- A session file that cannot be read is skipped and reported, never a reason for an unrelated command to fail.
+- Planner timeouts are configuration, not a fixed default, because a first model load can take minutes.
+- A command that exits non-zero is recorded in session memory and lends the process its own exit status.
+- Session startup can prune expired session files when `session_memory.retention_days` is configured, using their modification times, and only when the invocation uses session memory.
 - Captured command output is optional and stays out of prompts unless `session_memory.include_command_output_in_prompt = true`.
 - Ollama transport is selectable: `use_chat_api = true` uses `/api/chat`, otherwise `cli-bot` uses `/api/generate`.
 - A command runs unasked only when every program in it matches the configured read-only list; everything else is confirmed first, and destructive commands get a stronger prompt that defaults to no.
