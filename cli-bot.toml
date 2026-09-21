@@ -3,6 +3,13 @@ base_url = "http://127.0.0.1:11434"
 model = "ornith-1.5:9b"
 temperature = 0.0
 use_chat_api = true
+
+# How long one planner call may take, in seconds; 0 removes the limit.
+# Loading a large model for the first time can take minutes.
+request_timeout_seconds = 300
+# How long opening the connection may take, in seconds; 0 removes the limit.
+# Kept short, so an Ollama that is not running fails at once.
+connect_timeout_seconds = 10
 system_prompt = """
 You translate natural-language requests into safe shell commands.
 Return valid JSON only.

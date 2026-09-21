@@ -153,3 +153,9 @@ just check
 - `--yes`, `--i-approve-destructive-commands`, and `[safety] assume_yes`, including that neither the flag-free config key nor `--yes` silences the destructive tier
 - Failing closed with no terminal, with the error naming the tier and the flag that would allow the command
 - `require_confirmation = false` and `destructive_substrings` keeping their pre-v0.4.0 meaning
+- Session files: atomic writes leaving no temporary file, owner-only permissions on Unix including narrowing a file left wider, pruning by modification time, listing that skips an unparsable file, and a file under the pre-v0.4.0 name being found once and renamed
+- An unreadable session file stopping neither `--check`, `--no-session`, `--session-list` nor `--session-clear`, and `--no-session` never touching the sessions folder
+- Configurable planner timeouts, including a mock server slow enough to trigger one
+- Error kinds surviving a round trip through `anyhow`, interactive mode returning the prompt after a planner error, and end of input ending the session cleanly
+- A failed command keeping its exit status, being saved in session memory, and reading without a doubled word
+- Captured output being written on as it arrives, bounded by `max_output_bytes`, skipped for terminal programs, and the command inheriting standard input

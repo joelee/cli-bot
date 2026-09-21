@@ -113,6 +113,16 @@ pub struct OllamaConfig {
     pub system_prompt: String,
     #[serde(default)]
     pub use_chat_api: bool,
+    /// How long one planner call may take, in seconds. `0` removes the
+    /// limit. Loading a large model for the first time can take minutes,
+    /// which is why the default is generous.
+    #[serde(default = "default_request_timeout_seconds")]
+    pub request_timeout_seconds: u64,
+    /// How long opening the connection may take, in seconds. `0` removes
+    /// the limit. Kept short, so an Ollama that is not running fails at
+    /// once rather than after the request timeout.
+    #[serde(default = "default_connect_timeout_seconds")]
+    pub connect_timeout_seconds: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -137,6 +147,14 @@ impl Default for EnvironmentConfig {
 
 fn default_auto_setting() -> String {
     "auto".to_string()
+}
+
+fn default_request_timeout_seconds() -> u64 {
+    300
+}
+
+fn default_connect_timeout_seconds() -> u64 {
+    10
 }
 
 fn default_confirmation_prompt() -> String {
@@ -422,6 +440,8 @@ shell_arg = "-c"
         assert!(!config.safety.assume_yes);
         assert_eq!(config.ui.confirmation_prompt, "Run this command?");
         assert_eq!(config.safety.destructive_substrings, vec!["rm -rf"]);
+        assert_eq!(config.ollama.request_timeout_seconds, 300);
+        assert_eq!(config.ollama.connect_timeout_seconds, 10);
     }
 
     #[test]

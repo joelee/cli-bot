@@ -399,6 +399,8 @@ $HOME/.config/cli-bot/cli-bot.toml
 
 You can also configure the environment profile used for package-related requests, including `preferred_package_manager`.
 
+`[ollama] request_timeout_seconds` (default 300) and `connect_timeout_seconds` (default 10) bound a planner call and the connection to it; `0` removes either limit. Loading a large model for the first time can take minutes, which is what the request timeout allows for.
+
 Install the config into one of the default lookup locations.
 
 User-local:

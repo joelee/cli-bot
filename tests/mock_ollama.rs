@@ -1,15 +1,15 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cli_bot::{Cli, ColorMode, Prompter, run, run_with_prompter};
+use cli_bot::{Cli, CliBotError, ColorMode, Prompter, run, run_with_prompter};
 
 static TEMP_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
@@ -168,6 +168,11 @@ fn session_commands_list_show_and_prune() {
 "#,
     )
     .expect("expired session should write");
+    // Pruning reads the file's modification time, not its newest turn.
+    set_modified(
+        &storage_dir.join("sessions/default-global.json"),
+        SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60),
+    );
 
     let config_path = write_config(
         "http://127.0.0.1:1",
@@ -277,6 +282,11 @@ impl ScriptedPrompter {
         self
     }
 
+    fn with_requests(mut self, answers: impl IntoIterator<Item = &'static str>) -> Self {
+        self.requests = Mutex::new(answers.into_iter().map(ToString::to_string).collect());
+        self
+    }
+
     fn with_confirmations(mut self, answers: impl IntoIterator<Item = bool>) -> Self {
         self.confirmations = Mutex::new(answers.into_iter().collect());
         self
@@ -308,7 +318,10 @@ impl Prompter for ScriptedPrompter {
             .lock()
             .expect("requests should lock")
             .pop_front()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture request from terminal: no script"))
+            // A script that has run out is this harness's end of input.
+            .ok_or_else(|| {
+                anyhow::Error::new(CliBotError::Cancelled).context("the script has run out")
+            })
     }
 
     fn select(&self, prompt: &str, items: &[String], default: usize) -> anyhow::Result<usize> {
@@ -434,7 +447,7 @@ fn executes_command_and_saves_session_turn_with_captured_output() {
 }
 
 #[test]
-fn failed_command_returns_error_and_saves_no_turn() {
+fn a_failed_command_keeps_its_status_and_is_remembered() {
     let storage_dir = unique_temp_dir("cli-bot-exec-failure");
     let server =
         MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for("exit 3")]);
@@ -444,8 +457,20 @@ fn failed_command_returns_error_and_saves_no_turn() {
     let error = run_with_prompter(session_cli(config_path, vec!["fail"]), &prompter)
         .expect_err("exit 3 should fail");
 
-    assert!(error.to_string().contains("command exited with status"));
-    assert!(!storage_dir.join("sessions/default.json").exists());
+    assert_eq!(
+        error.downcast_ref::<CliBotError>(),
+        Some(&CliBotError::CommandFailed { status: Some(3) })
+    );
+    assert_eq!(
+        error.to_string(),
+        "command exited with status 3",
+        "no doubled word, and the status is the command's own"
+    );
+    // The attempt is remembered, so "why did that fail" has context.
+    let turn = &read_default_session(&storage_dir)["turns"][0];
+    assert_eq!(turn["selected_command"], "exit 3");
+    assert_eq!(turn["execution"]["executed"], true);
+    assert_eq!(turn["execution"]["exit_status"], 3);
 }
 
 /// A command in the state-changing tier that is harmless when it runs.
@@ -458,6 +483,165 @@ fn touch_command(directory: &Path) -> (String, PathBuf) {
 /// path does not exist, and `rm -f` succeeds on a missing path.
 fn absent_rm_command(directory: &Path) -> String {
     format!("rm -fr {}", path_to_string(&directory.join("absent")))
+}
+
+#[test]
+fn interactive_mode_survives_a_planner_error_and_keeps_asking() {
+    let storage_dir = unique_temp_dir("cli-bot-interactive-recovery");
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let server = MockOllamaServer::start(
+        capture.clone(),
+        vec![
+            // The first request gets a reply with no JSON in it at all.
+            MockResponse::generated("I have no idea what you mean"),
+            plan_for("ls -la"),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent().with_requests(["first request", "second request"]);
+    let mut cli = session_cli(config_path, vec![]);
+    cli.interactive = true;
+
+    run_with_prompter(cli, &prompter).expect("end of input ends the session cleanly");
+
+    assert_eq!(
+        capture.lock().expect("capture should lock").len(),
+        2,
+        "the second request must still reach the planner"
+    );
+    // Three prompts: two requests, then the one that ends the session.
+    let requests = prompter
+        .asked()
+        .into_iter()
+        .filter(|entry| matches!(entry, Asked::Request { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1], Asked::Request { error_state: true });
+    assert_eq!(
+        read_default_session(&storage_dir)["turns"]
+            .as_array()
+            .expect("turns should be an array")
+            .len(),
+        1,
+        "only the request that produced a command is remembered"
+    );
+}
+
+#[test]
+fn a_planner_error_outside_interactive_mode_is_still_fatal() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![MockResponse::generated("no json here")],
+    );
+    let config_path = ConfigOptions::default().write(server.base_url());
+
+    let error = run_with_prompter(
+        sample_cli(config_path, vec!["do something"]),
+        &ScriptedPrompter::silent(),
+    )
+    .expect_err("a single request has nowhere to recover to");
+
+    assert!(format!("{error:#}").contains("did not contain a JSON object"));
+}
+
+#[test]
+fn a_slow_planner_reports_the_timeout_rather_than_a_decoding_failure() {
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![plan_for("ls -la").after(Duration::from_secs(3))],
+    );
+    let config_path = ConfigOptions {
+        request_timeout_seconds: Some(1),
+        ..ConfigOptions::default()
+    }
+    .write(server.base_url());
+    let mut cli = sample_cli(config_path, vec!["list files"]);
+    cli.quiet = false;
+    cli.verbose = true;
+
+    let error = run(cli).expect_err("the request should time out");
+    let message = format!("{error:#}");
+
+    assert!(message.contains("failed to call Ollama"), "{message}");
+    assert!(
+        message.to_lowercase().contains("timed out") || message.to_lowercase().contains("timeout"),
+        "the cause should name the timeout: {message}"
+    );
+}
+
+#[test]
+fn an_unreadable_session_file_stops_nothing() {
+    let storage_dir = unique_temp_dir("cli-bot-corrupt-session");
+    let sessions = storage_dir.join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions dir should exist");
+    // A hand-edited or half-written file, which used to abort every run.
+    fs::write(sessions.join("broken.json"), "{\"name\": \"bro").expect("corrupt file should write");
+    let server = MockOllamaServer::start(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            // In the order the test asks for them: the seeding plan, then
+            // the version and tags that `--check` reads.
+            plan_for("ls -la"),
+            MockResponse::json(r#"{"version":"0.6.0"}"#),
+            MockResponse::json(r#"{"models":[{"name":"lfm2:latest"}]}"#),
+        ],
+    );
+    let config_path = ConfigOptions::with_session(&storage_dir).write(server.base_url());
+    let prompter = ScriptedPrompter::silent();
+
+    // Seed one good session beside the broken one.
+    run_with_prompter(
+        session_cli(config_path.clone(), vec!["list files"]),
+        &prompter,
+    )
+    .expect("a read-only command should run");
+
+    let mut check = sample_cli(config_path.clone(), vec![]);
+    check.check = true;
+    check.no_session = false;
+    run_with_prompter(check, &prompter).expect("--check must not read sessions");
+
+    let mut list = session_cli(config_path.clone(), vec![]);
+    list.session_list = true;
+    run_with_prompter(list, &prompter).expect("--session-list should skip the bad file");
+
+    let mut clear = session_cli(config_path.clone(), vec![]);
+    clear.session_clear = true;
+    run_with_prompter(clear, &prompter).expect("--session-clear should succeed");
+
+    let mut disabled = sample_cli(config_path, vec![]);
+    disabled.session_show = true;
+    let error = run_with_prompter(disabled, &prompter)
+        .expect_err("--no-session with a session command is still rejected");
+    assert!(error.to_string().contains("session memory is disabled"));
+
+    assert!(
+        sessions.join("broken.json").is_file(),
+        "a file the user wrote is theirs; it is skipped, not deleted"
+    );
+}
+
+#[test]
+fn without_session_memory_the_sessions_folder_is_never_touched() {
+    // A storage directory that does not exist: any read or prune would
+    // have to create or walk it.
+    let storage_dir = unique_temp_dir("cli-bot-untouched-sessions");
+    let server =
+        MockOllamaServer::start(Arc::new(Mutex::new(Vec::new())), vec![plan_for("ls -la")]);
+    let config_path = ConfigOptions {
+        retention_days: Some(1),
+        ..ConfigOptions::with_session(&storage_dir)
+    }
+    .write(server.base_url());
+    let mut cli = session_cli(config_path, vec!["list files"]);
+    cli.no_session = true;
+
+    run_with_prompter(cli, &ScriptedPrompter::silent()).expect("the command should run");
+
+    assert!(
+        !storage_dir.exists(),
+        "nothing may create the sessions folder"
+    );
 }
 
 #[test]
@@ -1344,6 +1528,8 @@ struct ConfigOptions {
     /// `false` restores the behaviour of versions before v0.4.0: nothing is
     /// ever confirmed.
     no_confirmation: bool,
+    /// Seconds; `None` leaves the key out so the default applies.
+    request_timeout_seconds: Option<u64>,
 }
 
 impl ConfigOptions {
@@ -1382,7 +1568,7 @@ base_url = "{base_url}"
 model = "lfm2:latest"
 temperature = 0.0
 use_chat_api = {use_chat_api}
-system_prompt = "Return JSON only"
+{timeout_line}system_prompt = "Return JSON only"
 
 [environment]
 os = "auto"
@@ -1426,6 +1612,10 @@ queries = {benchmark_queries:?}
 "#,
             base_url = base_url,
             use_chat_api = self.use_chat_api,
+            timeout_line = self
+                .request_timeout_seconds
+                .map(|seconds| format!("request_timeout_seconds = {seconds}\n"))
+                .unwrap_or_default(),
             assume_yes = self.assume_yes,
             require_confirmation = !self.no_confirmation,
             preferred_editor = preferred_editor,
@@ -1445,6 +1635,7 @@ queries = {benchmark_queries:?}
 struct MockOllamaServer {
     base_url: String,
     handle: Option<thread::JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl MockOllamaServer {
@@ -1456,36 +1647,59 @@ impl MockOllamaServer {
         let address = listener.local_addr().expect("address should resolve");
         let base_url = format!("http://{}", address);
 
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let stopping = shutdown.clone();
         let handle = thread::spawn(move || {
-            for response in responses {
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(10));
-                        }
-                        Err(error) => panic!("request should arrive: {error}"),
+            // Only a real request consumes a queued response, and the
+            // shutdown flag is checked between polls, so the thread ends on
+            // its own when the server is dropped. Nothing here may panic
+            // once a test is already failing: a panic while unwinding
+            // aborts the process and writes a 70 MB core file instead of
+            // reporting the test failure.
+            let mut index = 0;
+            while index < responses.len() {
+                if stopping.load(Ordering::Relaxed) {
+                    return;
+                }
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
                     }
+                    Err(_) => return,
                 };
-                let request = read_http_request(&mut stream);
+                let Some(request) = read_http_request(&mut stream) else {
+                    continue;
+                };
                 capture.lock().expect("capture should lock").push(request);
-                let payload = response.body;
+                // Slept in slices, so dropping the server does not wait
+                // out a delay the client has already given up on.
+                let deadline = std::time::Instant::now() + responses[index].delay;
+                while std::time::Instant::now() < deadline {
+                    if stopping.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+                let payload = responses[index].body.clone();
                 let http = format!(
                     "HTTP/1.1 {} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response.status,
+                    responses[index].status,
                     payload.len(),
                     payload
                 );
-                stream
+                let _ = stream
                     .write_all(http.as_bytes())
-                    .expect("response should write");
-                stream.flush().expect("response should flush");
+                    .and_then(|()| stream.flush());
+                index += 1;
             }
         });
 
         Self {
             base_url,
             handle: Some(handle),
+            shutdown,
         }
     }
 
@@ -1496,10 +1710,11 @@ impl MockOllamaServer {
 
 impl Drop for MockOllamaServer {
     fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = TcpStream::connect(self.base_url.trim_start_matches("http://"))
-                .and_then(|stream| stream.shutdown(Shutdown::Both));
-            handle.join().expect("server thread should join");
+            // Never `expect` here: this runs while a failing test unwinds,
+            // and a panic during unwinding aborts the process.
+            let _ = handle.join();
         }
     }
 }
@@ -1507,6 +1722,8 @@ impl Drop for MockOllamaServer {
 struct MockResponse {
     status: u16,
     body: String,
+    /// How long the server waits before replying, for timeout tests.
+    delay: Duration,
 }
 
 impl MockResponse {
@@ -1518,7 +1735,14 @@ impl MockResponse {
         Self {
             status,
             body: body.to_string(),
+            delay: Duration::ZERO,
         }
+    }
+
+    /// Replies only after `delay`, so a test can drive a client timeout.
+    fn after(mut self, delay: Duration) -> Self {
+        self.delay = delay;
+        self
     }
 
     /// A `/api/generate` reply whose generated text is `text`.
@@ -1538,14 +1762,16 @@ struct CapturedRequest {
     body: String,
 }
 
-fn read_http_request(stream: &mut std::net::TcpStream) -> CapturedRequest {
+/// Reads one HTTP request, or `None` when the peer sent nothing, which is
+/// what a connection opened only to wake the server looks like.
+fn read_http_request(stream: &mut std::net::TcpStream) -> Option<CapturedRequest> {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
     let mut header_end = None;
     let mut content_length = 0_usize;
 
     loop {
-        let bytes_read = stream.read(&mut chunk).expect("request should read");
+        let bytes_read = stream.read(&mut chunk).ok()?;
         if bytes_read == 0 {
             break;
         }
@@ -1571,18 +1797,28 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> CapturedRequest {
         }
     }
 
-    let header_end = header_end.expect("headers should exist");
+    let header_end = header_end?;
     let headers = String::from_utf8_lossy(&buffer[..header_end]);
-    let first_line = headers.lines().next().expect("request line should exist");
-    let path = first_line
+    let path = headers
+        .lines()
+        .next()?
         .split_whitespace()
-        .nth(1)
-        .expect("path should exist")
+        .nth(1)?
         .to_string();
     let body =
         String::from_utf8_lossy(&buffer[header_end..header_end + content_length]).to_string();
 
-    CapturedRequest { path, body }
+    Some(CapturedRequest { path, body })
+}
+
+/// Sets a file's modification time, which is what pruning looks at.
+fn set_modified(path: &Path, time: SystemTime) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("session file should open")
+        .set_modified(time)
+        .expect("modification time should be settable");
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

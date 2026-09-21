@@ -13,6 +13,7 @@ use console::style;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, Select};
 
+use crate::error::CliBotError;
 use crate::normalize_request;
 
 /// Asks the user the three questions the request flow needs.
@@ -46,9 +47,15 @@ impl Prompter for DialoguerPrompter {
     fn read_request(&self, error_state: bool) -> Result<String> {
         if !io::stdin().is_terminal() {
             let mut request = String::new();
-            io::stdin()
+            let read = io::stdin()
                 .read_line(&mut request)
                 .context("failed to read request from stdin")?;
+            // Nothing left to read: the pipe ended, or the file did.
+            if read == 0 {
+                return Err(
+                    anyhow::Error::new(CliBotError::Cancelled).context("no request was provided")
+                );
+            }
 
             return normalize_request(request);
         }
@@ -65,7 +72,12 @@ impl Prompter for DialoguerPrompter {
                 }
             })
             .interact_text()
-            .context("failed to capture request from terminal")
+            // `dialoguer` reports Ctrl-C and a lost terminal the same way,
+            // and both mean the same thing here: the user is done.
+            .map_err(|_| {
+                anyhow::Error::new(CliBotError::Cancelled)
+                    .context("failed to capture request from terminal")
+            })
             .and_then(normalize_request)
     }
 

@@ -45,40 +45,10 @@ is large, so each needs its own plan.
 
 ### Open findings of Review 00001 (2026-09-20)
 
-From [Review 00001](reviews/00001-Main_Current_Code_State.md), which
-replaces the handover-review list kept here before. `REV-00001-MAJ-01`
-(destructive commands run without confirmation) and `REV-00001-MED-06`
-(the approval and selection paths have no test) are not listed: PLAN-00002
-fixed both in v0.4.0. The "middle tier" for state-changing commands,
-formerly a candidate feature here, is part of MAJ-01.
+From [Review 00001](reviews/00001-Main_Current_Code_State.md). Fixed and no
+longer listed: `MAJ-01` and `MED-06` in v0.4.0 (PLAN-00002), and `MED-01` to
+`MED-05`, `LOW-01`, and `LOW-02` in v0.4.1 (PLAN-00003).
 
-Medium, in the order the review recommends:
-
-- **`REV-00001-MED-02` One unreadable session file stops every
-  invocation.** `prune_expired` runs before any flag is read and fails on
-  the first unparsable file, so `--check`, `--no-session`, and
-  `--session-clear` all stop. Skip and report bad files, do not prune when
-  the invocation does not use sessions, and write atomically through a
-  temporary file and `rename`.
-- **`REV-00001-MED-05` Session history is readable by other local users.**
-  Files are written `644` and the folder `755`. Create them `600` and
-  `700` on Unix, and tighten existing ones when next written. Do it with
-  MED-02, since both change how sessions are written.
-- **`REV-00001-MED-01` Planner calls fail after a fixed 30 seconds.**
-  Add `[ollama] request_timeout_seconds` (default about 300, `0` for none)
-  and a short connect timeout. Then regenerate
-  `docs/models-benchmark-report-v0.3.2.md`: 11 of its 35 calls failed on
-  this timeout, so its ranking partly measures speed, not answer quality.
-- **`REV-00001-MED-03` Interactive mode ends on the first planner error.**
-  Error kinds are told apart by matching message text, so a timeout or an
-  unparsable plan ends the session. Introduce typed errors, keep the
-  prompt open after a planner error, and exit 0 at end of input. Do it
-  with LOW-01.
-- **`REV-00001-MED-04` Output capture breaks interactive commands.** With
-  `capture_command_output = true` the command runs through
-  `Command::output()`, so `nvim`, `sudo`, `less`, and `ssh` cannot work
-  and nothing streams. Inherit stdin and copy output while collecting it,
-  or skip capture for known full-screen programs and document the limit.
 - **`REV-00001-MED-07` The rules point at a number-allocation script that
   is not in the repository.** Five tracked documents tell the writer to run
   `.agents/skills/allocating-report-numbers/allocate-report.sh`, which
@@ -86,17 +56,6 @@ Medium, in the order the review recommends:
   through `.git/info/exclude` and hold symlinks into
   `../opencode-template`. Track the script again, or have `just setup`
   create the links and say so in the documents.
-
-Low and Info:
-
-- **`REV-00001-LOW-01` A failed command loses its exit status, reads
-  oddly, and is not remembered.** Return the result for a non-zero exit,
-  save the turn, print `command exited with status 3`, and exit with the
-  child's code.
-- **`REV-00001-LOW-02` Session file names depend on an unspecified hash.**
-  `stable_path_hash` uses `DefaultHasher`, whose algorithm may change
-  between Rust releases and then orphans working-directory sessions. Use a
-  fixed algorithm and fall back to the old name once.
 - **`REV-00001-LOW-03` The default config template carries the
   maintainer's own settings.** The file written on first run sets
   `preferred_editor = "nvim"`, which overrides `$EDITOR` and fails
@@ -114,9 +73,7 @@ Low and Info:
 - **`REV-00001-LOW-06` Documents that no longer match the code state.**
   `docs/usage.md` and `docs/session-memory.md` credit session memory to
   `0.3.1`, a version never published; there are now three benchmark
-  reports, not two; `CHANGELOG.md` mixes the old `## [0.3.2] - <date>`
-  heading with the `## vX.Y.Z - <UTC timestamp>` form that
-  `scripts/check-release-tag.sh` requires from v0.3.3.
+  reports, not two.
 - **`REV-00001-LOW-07` Integration tests leave their temporary folders
   behind.** Each `just check` leaves about 60 folders under the system
   temporary directory. Return a guard that removes the folder on `Drop`,
@@ -136,6 +93,12 @@ Open questions the review could not answer without more evidence are in its
 `extract_json_document` through `/api/generate`, whether the `release`
 environment is restricted to `v*` tags, and the mixed action versions
 across the four workflows.
+
+Now that timeouts are configurable (`MED-01`), regenerating
+`docs/models-benchmark-report-v0.3.2.md` is worthwhile: 11 of its 35 calls
+failed on the old fixed 30-second limit, so its ranking partly measured
+speed rather than answer quality. It needs the owner's hardware and a long
+run.
 
 ### Tooling
 

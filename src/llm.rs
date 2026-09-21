@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use crate::config::OllamaConfig;
 use crate::environment::ResolvedEnvironment;
@@ -15,10 +16,13 @@ pub struct OllamaClient {
 
 impl OllamaClient {
     pub fn new(config: OllamaConfig) -> Self {
-        Self {
-            client: Client::new(),
-            config,
-        }
+        let client = Client::builder()
+            .timeout(optional_timeout(config.request_timeout_seconds))
+            .connect_timeout(optional_timeout(config.connect_timeout_seconds))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        Self { client, config }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -553,6 +557,11 @@ fn build_text_response_prompt(
     )
 }
 
+/// Seconds as a duration, with `0` meaning no limit.
+fn optional_timeout(seconds: u64) -> Option<Duration> {
+    (seconds > 0).then(|| Duration::from_secs(seconds))
+}
+
 fn validate_plan(plan: &CommandPlan) -> Result<()> {
     if plan.unresolved {
         return Ok(());
@@ -575,13 +584,41 @@ fn extract_json_document(response: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GenerateRequest, OllamaStatus, build_command_prompt, build_text_response_prompt,
-        extract_json_document, validate_plan,
+        GenerateRequest, OllamaClient, OllamaStatus, build_command_prompt,
+        build_text_response_prompt, extract_json_document, optional_timeout, validate_plan,
     };
+    use crate::config::OllamaConfig;
     use crate::environment::{
         OperatingSystem, PackageManager, PackageManagerSource, ResolvedEnvironment,
     };
     use crate::planner::{CommandPlan, PlannedCommand};
+    use std::time::Duration;
+
+    /// A config with the timeouts a test wants, everything else fixed.
+    fn timeout_config(request: u64, connect: u64) -> OllamaConfig {
+        OllamaConfig {
+            base_url: "http://127.0.0.1:1".into(),
+            model: "m".into(),
+            temperature: 0.0,
+            system_prompt: "x".into(),
+            use_chat_api: false,
+            request_timeout_seconds: request,
+            connect_timeout_seconds: connect,
+        }
+    }
+
+    #[test]
+    fn builds_a_client_from_the_configured_timeouts() {
+        // A builder that rejects the values would fail here.
+        OllamaClient::new(timeout_config(300, 10));
+        OllamaClient::new(timeout_config(1, 1));
+    }
+
+    #[test]
+    fn zero_means_no_limit() {
+        assert_eq!(optional_timeout(0), None);
+        assert_eq!(optional_timeout(7), Some(Duration::from_secs(7)));
+    }
 
     #[test]
     fn extracts_plain_json_document() {

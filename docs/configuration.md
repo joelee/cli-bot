@@ -24,6 +24,8 @@ For local development from the project root, pass `--config ./cli-bot.toml` expl
 - `temperature`: generation temperature
 - `use_chat_api`: use Ollama's role-based `/api/chat` endpoint instead of `/api/generate`
 - `system_prompt`: base system instruction for the planner
+- `request_timeout_seconds`: how long one planner call may take, in seconds; `0` removes the limit. The default of 300 is generous because loading a large model for the first time can take minutes
+- `connect_timeout_seconds`: how long opening the connection may take, in seconds; `0` removes the limit. The default of 10 keeps an Ollama that is not running failing at once rather than after the request timeout
 
 ### `[environment]`
 

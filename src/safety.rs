@@ -511,6 +511,17 @@ fn has_flag(args: &[String], short: &[char], long: &[&str]) -> bool {
     false
 }
 
+/// The programs a command runs, in order, with wrappers such as `sudo` and
+/// leading `VAR=value` assignments stripped and paths reduced to their last
+/// component. `cat notes.md | less` gives `["cat", "less"]`.
+pub fn program_names(command: &str) -> Vec<String> {
+    parse(command)
+        .segments
+        .iter()
+        .filter_map(|words| program_and_args(words).map(|(program, _)| program))
+        .collect()
+}
+
 /// The read-only programs cli-bot ships with, used when the configuration
 /// file does not list its own.
 pub fn default_read_only_commands() -> Vec<String> {
@@ -594,7 +605,7 @@ pub fn default_read_only_commands() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandRisk, classify, default_read_only_commands};
+    use super::{CommandRisk, classify, default_read_only_commands, program_names};
 
     fn risk(command: &str) -> CommandRisk {
         classify(
@@ -795,6 +806,18 @@ mod tests {
             CommandRisk::Destructive,
             "destructive_substrings still forces the strong tier"
         );
+    }
+
+    #[test]
+    fn program_names_sees_through_pipelines_and_wrappers() {
+        assert_eq!(program_names("ls -la"), ["ls"]);
+        assert_eq!(program_names("cat notes.md | less"), ["cat", "less"]);
+        assert_eq!(program_names("sudo -u root /usr/bin/nvim f"), ["nvim"]);
+        assert_eq!(
+            program_names("LC_ALL=C git status && /bin/ls"),
+            ["git", "ls"]
+        );
+        assert_eq!(program_names(""), Vec::<String>::new());
     }
 
     #[test]
