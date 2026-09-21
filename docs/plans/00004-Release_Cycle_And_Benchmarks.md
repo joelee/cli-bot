@@ -8,10 +8,10 @@ tags:
   - claude-code
 type: delivery-plan
 plan_id: "PLAN-00004"
-plan_status: draft                 # draft | approved | cancelled
+plan_status: approved              # draft | approved | cancelled
 plan_kind: initial                 # initial | superseding
 created_at: "2026-09-21T20:31:02Z"
-approved_at: null
+approved_at: "2026-09-21T23:00:34Z"
 planner_agent: "Claude Code"
 planner_model: "anthropic/claude-opus-5"
 triggered_by: user                 # user | agent:<agent-name>
@@ -27,7 +27,7 @@ requirements_count: 15
 steps_count: 8
 acceptance_criteria_count: 20
 blocking_decisions: 0
-build_ready: false
+build_ready: true
 web_research_used: false
 confidence: medium                # high | medium | low
 
@@ -193,7 +193,7 @@ material.
 | ID | Decision or blocker | Resolution | Owner | Status |
 |---|---|---|---|---|
 | D-01 | How a release is triggered | One workflow on `push: branches: [main]`. It reads the version from `Cargo.toml`, exits quietly when the tag exists or `check-release-tag.sh` fails, and otherwise creates and pushes the tag itself before building. A separate auto-tag workflow cannot work: a tag pushed with `GITHUB_TOKEN` does not trigger another workflow run | Planner | Resolved |
-| D-02 | The crates.io approval gate | **Kept.** The user called it unnecessary, and it is today; under D-01 it stops being so, because merging the pull request becomes the only other human decision before an irreversible publish. One deliberate confirmation, not two and not none. The user was asked and did not answer, so this is the planner's recommendation and the most likely thing to overturn at approval | Planner | Resolved |
+| D-02 | The crates.io approval gate | **Kept**, confirmed by the user at approval on 2026-09-21: "Keep crates.io approval gate." Under D-01 merging the pull request becomes the only other human decision before an irreversible publish, so the gate is the one deliberate confirmation that the builds are green | User | Resolved |
 | D-03 | The changelog version heading | A date, `## v0.5.0 - 2026-09-21`, not a UTC timestamp. Once the heading is written in the feature branch, a timestamp's precision is false. `check-release-tag.sh` accepts either and keeps requiring the heading | Planner | Resolved |
 | D-04 | Automating the Homebrew pull request | From the user's machine, by extending `scripts/update-homebrew-formula.sh` to branch, commit, push and open the pull request. Doing it from CI needs a token with write access to another repository, living in this one, for a step that runs a few times a year | Planner | Resolved |
 | D-05 | Branch protection | A GitHub setting the agent cannot make. It matters more under D-01, because a direct push to `main` carrying final records would publish with no pull request at all. Handed over in section 16 | Planner | Resolved |
@@ -859,6 +859,7 @@ Allowed status values: `not-started`, `in-progress`, `blocked`, `completed`,
 | Timestamp (UTC) | Plan status | Change | Reason | Requested/approved by |
 |---|---|---|---|---|
 | 2026-09-21T20:31:02Z | draft | Plan created | User asked to improve the release cycle with automation, to add tokens per second to both benchmarks, and to close the remaining Review 00001 findings | User |
+| 2026-09-21T23:00:34Z | approved | Plan approved; D-02 confirmed by the user, so the `release` environment keeps its required reviewer. `build_ready` set | User replied "Keep crates.io approval gate. Approved." | User |
 
 ## 19. External references
 
