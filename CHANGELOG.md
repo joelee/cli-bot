@@ -6,6 +6,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## v0.4.1 - 2026-09-21T19:29:37Z
+
 ### Added
 
 - `[ollama] request_timeout_seconds` and `connect_timeout_seconds`, so a slow model load no longer fails after reqwest's fixed 30 seconds (`REV-00001-MED-01`)
